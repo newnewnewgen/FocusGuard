@@ -12,6 +12,9 @@ swift build -c release
 sudo mkdir -p /usr/local/libexec /Library/Logs/FocusGuard "/Library/Application Support/FocusGuard"
 sudo chown root:admin "/Library/Application Support/FocusGuard"
 sudo chmod 775 "/Library/Application Support/FocusGuard"
+if [ -f "/Library/Application Support/FocusGuard/config.json" ]; then
+    sudo chmod 664 "/Library/Application Support/FocusGuard/config.json"
+fi
 
 if sudo launchctl print system/$LABEL >/dev/null 2>&1; then
     sudo launchctl bootout system/$LABEL
