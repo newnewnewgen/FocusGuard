@@ -1331,7 +1331,7 @@ final class ConfigResolverTests: XCTestCase {
     lazy var cfg = Config(blockLists: [list], schedules: [morning])
     lazy var backToBack = Config(blockLists: [list], schedules: [morning, afternoon])
     lazy var always = Config(blockLists: [list], schedules: [
-        ScheduleWindow(name: "24/7", days: Set(Weekday.allCases), start: TimeOfDay("00:00")!, end: TimeOfDay("00:00")!, blockListIDs: [list.id])])
+        ScheduleWindow(name: "24/7", days: Set(Weekday.allCases), start: TimeOfDay("00:00")!, end: TimeOfDay("23:59")!, blockListIDs: [list.id])])
 
     let at10 = LocalMoment(weekday: .mon, minutesSinceMidnight: 10 * 60)
     let at1230 = LocalMoment(weekday: .mon, minutesSinceMidnight: 12 * 60 + 30)
