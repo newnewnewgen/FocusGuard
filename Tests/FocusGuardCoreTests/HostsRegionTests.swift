@@ -76,4 +76,14 @@ final class HostsRegionTests: XCTestCase {
         let out = HostsRegion.apply(domains: ["x.com"], to: "127.0.0.1 localhost")
         XCTAssertTrue(out.hasPrefix("127.0.0.1 localhost\n# FOCUSGUARD START\n"))
     }
+
+    func testMarkersWithTrailingWhitespaceStillDelimitTheRegion() {
+        let contents = "a\n" + HostsRegion.startMarker + " \n0.0.0.0 x.com\n" + HostsRegion.endMarker + "\t\nb\n"
+        XCTAssertEqual(HostsRegion.strip(contents), "a\nb\n")
+    }
+
+    func testStripLeavesFilesWithoutARegionByteIdentical() {
+        XCTAssertEqual(HostsRegion.strip("a\n\n\n"), "a\n\n\n")
+        XCTAssertEqual(HostsRegion.apply(domains: [], to: "a\n\n\n"), "a\n\n\n")
+    }
 }

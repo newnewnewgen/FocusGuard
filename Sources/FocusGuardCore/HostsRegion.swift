@@ -36,15 +36,19 @@ public enum HostsRegion {
     }
 
 
-    /// Removes the marked region. A missing end marker strips to end of file.
+    /// Removes the marked region. A missing end marker strips to end of file. A file with no
+    /// region is returned unchanged.
     public static func strip(_ contents: String) -> String {
         var kept: [Substring] = []
         var inRegion = false
+        var sawRegion = false
         for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line == startMarker { inRegion = true; continue }
-            if line == endMarker { inRegion = false; continue }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == startMarker { inRegion = true; sawRegion = true; continue }
+            if trimmed == endMarker { inRegion = false; continue }
             if !inRegion { kept.append(line) }
         }
+        guard sawRegion else { return contents }
         if inRegion, !kept.isEmpty { kept.append("") }  // unterminated region: keep the preceding line's newline
         var result = kept.joined(separator: "\n")
         while result.hasSuffix("\n\n") { result.removeLast() }

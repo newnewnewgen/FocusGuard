@@ -11,23 +11,54 @@ public struct ClockSample: Codable, Equatable {
     }
 }
 
+/// Defends schedule matching against the wall clock being changed.
+///
+/// Trusted time is always projected from an *anchor* sample along the monotonic clock
+/// (`mach_continuous_time`: counts through sleep, cannot be set). The anchor moves only on the
+/// first sample, after a reboot (monotonic went backwards), or after the wall clock has disagreed
+/// with the projection continuously for `reconvergeAfter` — long enough that a genuine correction
+/// eventually wins, far too long for a clock change to shorten or delay a window. Because the
+/// anchor is sticky, drift is measured cumulatively and small steps cannot creep past `tolerance`.
 public struct ClockGuard {
-    public var tolerance: TimeInterval
+    public struct State: Codable, Equatable {
+        public var anchor: ClockSample
+        /// Monotonic time at which the wall clock started disagreeing; nil while it agrees.
+        public var disagreeingSince: TimeInterval?
 
-    public init(tolerance: TimeInterval = 120) {
-        self.tolerance = tolerance
+        public init(anchor: ClockSample, disagreeingSince: TimeInterval? = nil) {
+            self.anchor = anchor
+            self.disagreeingSince = disagreeingSince
+        }
     }
 
-    /// The wall-clock time to use for schedule matching. If the wall clock has gone backwards
-    /// relative to monotonic progress by more than `tolerance`, the monotonic projection wins.
-    /// Callers should feed back `ClockSample(wall: <returned value>, monotonic: current.monotonic)`
-    /// as the next `previous`, so a tampered clock stays overridden until it agrees again.
-    public func trustedNow(previous: ClockSample?, current: ClockSample) -> Date {
-        guard let previous else { return current.wall }
-        let projected = previous.wall.addingTimeInterval(current.monotonic - previous.monotonic)
-        if current.wall < projected.addingTimeInterval(-tolerance) {
-            return projected
+    public struct Step: Equatable {
+        public var trusted: Date
+        public var state: State
+        public var tampered: Bool
+    }
+
+    public var tolerance: TimeInterval
+    public var reconvergeAfter: TimeInterval
+
+    public init(tolerance: TimeInterval = 120, reconvergeAfter: TimeInterval = 24 * 3600) {
+        self.tolerance = tolerance
+        self.reconvergeAfter = reconvergeAfter
+    }
+
+    public func step(state: State?, now: ClockSample) -> Step {
+        guard let state, now.monotonic >= state.anchor.monotonic else {
+            // First sample, or the machine rebooted: nothing to project from.
+            return Step(trusted: now.wall, state: State(anchor: now), tampered: false)
         }
-        return current.wall
+        let projected = state.anchor.wall.addingTimeInterval(now.monotonic - state.anchor.monotonic)
+        let diff = now.wall.timeIntervalSince(projected)
+        if abs(diff) <= tolerance {
+            return Step(trusted: projected, state: State(anchor: state.anchor), tampered: false)
+        }
+        let since = state.disagreeingSince ?? now.monotonic
+        if now.monotonic - since >= reconvergeAfter {
+            return Step(trusted: now.wall, state: State(anchor: now), tampered: false)
+        }
+        return Step(trusted: projected, state: State(anchor: state.anchor, disagreeingSince: since), tampered: true)
     }
 }
