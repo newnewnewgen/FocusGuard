@@ -2599,6 +2599,169 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 12b: Daemon hardening before launchd install (review fixes)
+
+Review of Tasks 11–12 cleared `once` as safe to run but asked for these before the daemon runs permanently: (1) `fsync` the temp file before `rename` so a power loss cannot leave an empty `/etc/hosts`; (2) tolerate a Latin-1 hosts file on read; (3) latch the `config.json` decode-error log (a half-saved editor write spams the log at 2 s); (4) use wall-clock deadlines and cap the idle leeway at 2 s so a window boundary is honoured within 32 s even after sleep; (5) keep `last-good.json` and `clock-state.json` in a `0700 root:wheel` subdirectory so an admin user cannot delete them without `sudo`, matching spec §6; (6) ensure directories exist in `once` too.
+
+**Files:**
+- Modify: `Sources/focusguardd/EtcHostsStore.swift`, `ConfigFile.swift`, `Paths.swift`, `Daemon.swift`
+
+- [ ] **Step 1: EtcHostsStore — durable atomic write, tolerant read**
+
+Replace the whole file:
+```swift
+import Darwin
+import Foundation
+import FocusGuardCore
+
+struct EtcHostsStore: HostsFileStore {
+    let path: String
+
+    struct EncodingError: Error {}
+
+    func read() throws -> String {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        if let s = String(data: data, encoding: .utf8) { return s }
+        // A hosts file with stray Latin-1 bytes must not make the site layer permanently inert.
+        guard let s = String(data: data, encoding: .isoLatin1) else { throw EncodingError() }
+        return s
+    }
+
+    /// Write to a sibling temp file, flush it to stable storage, then rename over the original,
+    /// so readers never see a partial file and a power loss cannot leave an empty /etc/hosts.
+    func write(_ contents: String) throws {
+        let tmp = path + ".focusguard.tmp"
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        guard fd >= 0 else { throw posixError("open \(tmp)") }
+        defer { close(fd) }
+        guard fchmod(fd, 0o644) == 0 else { throw posixError("chmod \(tmp)") }
+
+        let data = Data(contents.utf8)
+        try data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+            guard let base = buf.baseAddress else { return }
+            var off = 0
+            while off < buf.count {
+                let n = Darwin.write(fd, base + off, buf.count - off)
+                guard n > 0 else { throw posixError("write \(tmp)") }
+                off += n
+            }
+        }
+        guard fcntl(fd, F_FULLFSYNC) == 0 || fsync(fd) == 0 else { throw posixError("fsync \(tmp)") }
+        guard rename(tmp, path) == 0 else {
+            let err = posixError("rename \(tmp) → \(path)")
+            try? FileManager.default.removeItem(atPath: tmp)
+            throw err
+        }
+    }
+
+    private func posixError(_ what: String) -> Error {
+        let err = errno
+        return NSError(domain: NSPOSIXErrorDomain, code: Int(err),
+                       userInfo: [NSLocalizedDescriptionKey: "\(what): \(String(cString: strerror(err)))"])
+    }
+}
+```
+
+- [ ] **Step 2: Paths — root-only state subdirectory**
+
+Replace the whole file:
+```swift
+import Foundation
+
+enum Paths {
+    static let supportDir = "/Library/Application Support/FocusGuard"   // root:admin 0775
+    static let config = supportDir + "/config.json"                      // admin-writable
+    static let stateDir = supportDir + "/state"                          // root:wheel 0700
+    static let lastGood = stateDir + "/last-good.json"
+    static let clockState = stateDir + "/clock-state.json"
+    static let hosts = "/etc/hosts"
+    static let launchdLabel = "com.focusguard.daemon"
+}
+```
+
+- [ ] **Step 3: ConfigFile — create both dirs, latch decode errors**
+
+Replace `ensureSupportDir` and `load` (leave the last-good / clock-state functions as they are):
+```swift
+    /// Support dir is root:admin 0775 so an admin user can write config.json; the state dir is
+    /// root-only so the fail-closed snapshot and clock anchor cannot be removed without sudo.
+    static func ensureSupportDir() throws {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: Paths.supportDir) {
+            try fm.createDirectory(atPath: Paths.supportDir, withIntermediateDirectories: true)
+        }
+        try fm.setAttributes([.posixPermissions: 0o775, .groupOwnerAccountName: "admin"], ofItemAtPath: Paths.supportDir)
+        if !fm.fileExists(atPath: Paths.stateDir) {
+            try fm.createDirectory(atPath: Paths.stateDir, withIntermediateDirectories: false)
+        }
+        try fm.setAttributes([.posixPermissions: 0o700, .groupOwnerAccountName: "wheel"], ofItemAtPath: Paths.stateDir)
+    }
+
+    private static var lastDecodeError: String?
+
+    /// nil on any failure; the caller falls back to last-good. Decode errors are logged once per
+    /// distinct message, not every tick.
+    static func load(log: ReconcilerLog) -> Config? {
+        guard let data = FileManager.default.contents(atPath: Paths.config) else { return nil }
+        do {
+            let config = try Config.decodeJSON(data)
+            if lastDecodeError != nil {
+                lastDecodeError = nil
+                log.info("config.json readable again")
+            }
+            return config
+        } catch {
+            let message = "\(error)"
+            if message != lastDecodeError {
+                lastDecodeError = message
+                log.error("config.json unreadable: \(message)")
+            }
+            return nil
+        }
+    }
+```
+
+- [ ] **Step 4: Daemon — wall deadlines, capped leeway, dirs in `once`**
+
+In `Daemon.swift`:
+- Change the doc comment on `idleTick` to: `/// Outside all windows: nothing to enforce, so wake rarely. A window boundary is therefore honoured within idleTick + leeway (32 s); the Plan 2 app tightens this with an exact timer.`
+- Move the `ensureSupportDir` call from `run()` into `init()` as its first statement, so `once` creates the directories too:
+```swift
+    init() {
+        do {
+            try ConfigFile.ensureSupportDir()
+        } catch {
+            log.error("cannot create \(Paths.supportDir): \(error)")
+        }
+        lastSavedClockState = ConfigFile.loadClockState()
+        …
+```
+  and delete the `do { try ConfigFile.ensureSupportDir() } catch { … }` block from `run()`.
+- Replace `reschedule` with:
+```swift
+    /// Wall-clock deadlines keep firing on schedule after sleep; a 2 s leeway still lets the kernel
+    /// coalesce our wake-ups with everyone else's.
+    private func reschedule(interval: TimeInterval) {
+        guard let timer, interval != currentInterval else { return }
+        currentInterval = interval
+        timer.schedule(wallDeadline: .now() + interval, repeating: interval, leeway: .seconds(2))
+    }
+```
+- Change the initial schedule line in `run()` to `t.schedule(wallDeadline: .now(), repeating: Self.activeTick, leeway: .milliseconds(500))`.
+
+- [ ] **Step 5: Build, smoke, commit**
+
+Run: `swift build 2>&1 | grep -E "error|warning|Build complete"` → `Build complete!`, no errors.
+Run: `.build/debug/focusguardd check; echo exit=$?` → `no config at …`, `exit=1` (unchanged).
+```bash
+git add Sources/focusguardd
+git commit -m "Daemon: fsync hosts writes, root-only state dir, latched config log, wall-clock timer
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 13: Example config + manual `once` verification
 
 **Files:**
