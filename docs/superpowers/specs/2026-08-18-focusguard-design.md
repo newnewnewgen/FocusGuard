@@ -9,6 +9,15 @@
 > browser tab-watcher layer (DoH-proof), a clock-tamper check, bounded
 > fail-closed instead of fail-open, and launch-event app killing. Changed
 > sections are marked **[rev]**.
+>
+> **Later the same day:** the tab watcher is **deferred indefinitely** on
+> battery grounds (1–3 % CPU per browser during windows). In its place the
+> hosts region also sinkholes the public DoH resolvers (`dns.google`,
+> `cloudflare-dns.com`, `mozilla.cloudflare-dns.com`, …) whenever a block is
+> active, so Chrome's automatic secure-DNS and Firefox's default TRR mode fall
+> back to the system resolver. Zero runtime cost. Revisit the watcher only if
+> real use shows hosts + DoH sinkhole is insufficient. §5b is kept below as
+> the design on file but is not scheduled.
 
 ## 1. Purpose
 
@@ -27,10 +36,9 @@ Deferred to v2+, explicitly out of scope for the first working version:
 
 - Manual "start focus now" ad-hoc sessions
 - Break-glass / timed override (typing-challenge friction is the settled v2 pattern)
-- Blocking DNS-over-HTTPS (DoH) endpoints at the network level — the tab
-  watcher (§5b) covers the DoH case for supported browsers instead
-- pf firewall rules (hosts + tab watcher is the v1 stack; pf is a v2 layer)
-- Firefox tab watching (no AppleScript tab dictionary; needs an extension)
+- The browser tab watcher (§5b) — deferred, see revision note
+- pf firewall rules (hosts + DoH sinkhole is the v1 stack; pf is a v2 layer)
+- Custom/hand-configured DoH providers beyond the sinkholed public list
 - Stats, history, or reporting
 - Notifications
 - iCloud / cross-device sync
@@ -152,7 +160,7 @@ immediately, so the user sees at most a flash rather than up to 20 s of the
 app. The 20 s sweep remains the safety net for apps already running when a
 window opens, and for any missed notification.
 
-### 5b. App (user session): browser tab watcher
+### 5b. App (user session): browser tab watcher — **DEFERRED, not scheduled**
 
 Runs only while at least one window is active (the app computes the same
 active set from the same config via `FocusGuardCore`). Design copied from
@@ -211,9 +219,10 @@ deferred.
   marked region.
 - **DST / timezone:** schedule windows are matched against the machine's current
   local calendar time.
-- **DoH:** bypasses `/etc/hosts`; covered by the tab watcher (§5b) for
-  supported browsers. Unsupported browsers (Firefox) and non-browser apps with
-  DoH are an accepted v1 gap.
+- **DoH:** bypasses `/etc/hosts`. Mitigated by sinkholing the public DoH
+  resolver hostnames in the same hosts region while any block is active;
+  Chrome (automatic mode) and Firefox (default mode) then fall back to the
+  system resolver. A hand-configured custom DoH provider is an accepted gap.
 - **VPN / iCloud Private Relay:** not addressed by any layer (SelfControl calls
   it "not technically feasible"; only a Network Extension content filter, which
   needs a paid developer account, covers it). Accepted.
