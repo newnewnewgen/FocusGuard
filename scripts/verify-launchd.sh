@@ -54,7 +54,7 @@ check "example.com reachable again" 'curl -sS -m 5 -o /dev/null https://example.
 echo "--- SIGTERM teardown: re-enter a window, then bootout"
 start=$(date -r $(( $(date +%s) - 60 )) +%H:%M); end=$(date -r $(( $(date +%s) + 600 )) +%H:%M)
 sed -i '' "s/\"start\": \"[0-9:]*\"/\"start\": \"$start\"/; s/\"end\": \"[0-9:]*\"/\"end\": \"$end\"/" "$CFG"
-sleep 5
+sleep 35   # daemon is on its 30 s idle tick after the window ended
 check "region present again" 'grep -q "0.0.0.0 example.com" /etc/hosts'
 sudo launchctl bootout system/$LABEL; sleep 2
 check "bootout cleared the region" '! grep -q FOCUSGUARD /etc/hosts'
@@ -63,7 +63,7 @@ check "daemon re-bootstrapped" 'sudo launchctl print system/$LABEL | grep -q "st
 
 echo "--- disable the test window so nothing stays blocked"
 sed -i '' 's/"enabled": true/"enabled": false/' "$CFG"
-sleep 5
+sleep 5   # a window is active here, so the daemon is on its 2 s tick
 check "region cleared after disabling" '! grep -q FOCUSGUARD /etc/hosts'
 
 if [ $fail = 0 ]; then echo "ALL OK"; else echo "SOME CHECKS FAILED"; fi
