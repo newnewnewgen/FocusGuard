@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "blockLists": [
+    {
+      "id": "0B1C2D3E-0000-4000-8000-000000000001",
+      "name": "Distractions",
+      "domains": ["example.com", "reddit.com"],
+      "appBundleIDs": ["com.apple.Chess"]
+    }
+  ],
+  "schedules": [
+    {
+      "id": "0B1C2D3E-0000-4000-8000-000000000002",
+      "name": "Test window",
+      "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+      "start": "00:00",
+      "end": "23:59",
+      "blockListIDs": ["0B1C2D3E-0000-4000-8000-000000000001"],
+      "enabled": true
+    }
+  ]
+}
