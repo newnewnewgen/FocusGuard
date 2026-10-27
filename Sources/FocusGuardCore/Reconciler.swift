@@ -23,7 +23,8 @@ public final class Reconciler {
     /// Persisted by the daemon so a restart within the same boot cannot reset the clock anchor.
     public private(set) var clockState: ClockGuard.State?
     private var wasTampered = false
-    /// pid → monotonic deadline after which SIGKILL is sent.
+    private var hostsFailing = false
+    /// pid → monotonic deadline for SIGKILL; `.infinity` once SIGKILL has been sent (waiting for it to disappear).
     private var pendingKill: [Int32: TimeInterval] = [:]
 
     public init(hosts: HostsFileStore, dns: DNSCacheFlusher, processes: ProcessController, log: ReconcilerLog,
@@ -74,24 +75,29 @@ public final class Reconciler {
     }
 
     private func reconcileHosts(domains: Set<String>) -> Bool {
-        let current: String
         do {
-            current = try hosts.read()
+            let current = try hosts.read()
+            let desired = HostsRegion.apply(domains: domains, to: current)
+            var changed = false
+            if desired != current {
+                try hosts.write(desired)
+                dns.flush()
+                log.info("hosts region updated: \(domains.count) domain(s)")
+                changed = true
+            }
+            if hostsFailing {
+                hostsFailing = false
+                log.info("hosts access recovered")
+            }
+            return changed
         } catch {
-            log.error("hosts read failed: \(error)")
+            // Latched: a persistent failure at a 2 s tick must not log every tick.
+            if !hostsFailing {
+                hostsFailing = true
+                log.error("hosts access failed: \(error)")
+            }
             return false
         }
-        let desired = HostsRegion.apply(domains: domains, to: current)
-        guard desired != current else { return false }
-        do {
-            try hosts.write(desired)
-        } catch {
-            log.error("hosts write failed: \(error)")
-            return false
-        }
-        dns.flush()
-        log.info("hosts region updated: \(domains.count) domain(s)")
-        return true
     }
 
     private func reconcileApps(bundleIDs: Set<String>, monotonic: TimeInterval) -> ([Int32], [Int32]) {
@@ -110,9 +116,9 @@ public final class Reconciler {
         for app in running {
             guard let id = app.bundleID, bundleIDs.contains(id) else { continue }
             if let deadline = pendingKill[app.pid] {
-                if monotonic >= deadline {
+                if deadline.isFinite, monotonic >= deadline {
                     processes.kill(pid: app.pid)
-                    pendingKill[app.pid] = nil
+                    pendingKill[app.pid] = .infinity
                     killed.append(app.pid)
                     log.info("killed \(id) pid \(app.pid)")
                 }

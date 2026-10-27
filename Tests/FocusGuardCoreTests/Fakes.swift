@@ -35,3 +35,13 @@ final class FakeLog: ReconcilerLog {
     func info(_ m: String) { infos.append(m) }
     func error(_ m: String) { errors.append(m) }
 }
+
+/// A process that ignores SIGKILL (protected or zombie): stays in the list after kill.
+final class StubbornProcesses: ProcessController {
+    var apps: [RunningApp] = []
+    var terminated: [Int32] = []
+    var killed: [Int32] = []
+    func runningApps() -> [RunningApp] { apps }
+    func terminate(pid: Int32) { terminated.append(pid) }
+    func kill(pid: Int32) { killed.append(pid) }
+}

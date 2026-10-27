@@ -137,6 +137,31 @@ final class ReconcilerTests: XCTestCase {
         XCTAssertEqual(log.errors.count, 1)
     }
 
+    func testPersistentHostsFailureLogsOnceAndRecoveryOnce() {
+        hosts.failReads = true
+        for i in 0..<3 {
+            _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, i * 2), monotonic: 100 + Double(i * 2)))
+        }
+        XCTAssertEqual(log.errors.count, 1, "latched: one error for a persistent failure")
+        hosts.failReads = false
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 8), monotonic: 108))
+        XCTAssertEqual(log.errors.count, 1)
+        XCTAssertTrue(log.infos.contains { $0.contains("recovered") })
+        XCTAssertTrue(hosts.contents.contains("0.0.0.0 reddit.com"))
+    }
+
+    func testUnkillableAppIsNotReSignalledEveryTick() {
+        let stubborn = StubbornProcesses()
+        stubborn.apps = [RunningApp(pid: 42, bundleID: "com.example.slack")]
+        let r = Reconciler(hosts: hosts, dns: dns, processes: stubborn, log: log, killGrace: 3, calendar: cal)
+        for i in 0..<10 {
+            _ = r.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, i * 2), monotonic: 100 + Double(i * 2)))
+        }
+        XCTAssertEqual(stubborn.terminated, [42])
+        XCTAssertEqual(stubborn.killed, [42])
+        XCTAssertEqual(log.infos.filter { $0.contains("pid 42") }.count, 2, "one terminate line, one kill line")
+    }
+
     func testTeardownStripsRegion() {
         _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
         sut.teardown()
