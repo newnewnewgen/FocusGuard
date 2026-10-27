@@ -28,7 +28,7 @@ FocusGuard/
 │   │   ├── Schedule.swift        LocalMoment, ScheduleWindow.isActive
 │   │   ├── ActiveSet.swift       ActiveSet, Config.activeSet(at:)
 │   │   ├── HostsRegion.swift     render / apply / strip of the marked region
-│   │   ├── ClockGuard.swift      ClockSample, ClockGuard.trustedNow
+│   │   ├── ClockGuard.swift      ClockSample, ClockGuard.step (sticky anchor, persisted State)
 │   │   ├── ConfigResolver.swift  bounded fail-closed policy
 │   │   ├── Ports.swift           protocols: HostsFileStore, DNSCacheFlusher, ProcessController, ReconcilerLog
 │   │   └── Reconciler.swift      one tick = converge the system to the active set
@@ -1104,6 +1104,432 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 8b: Redesign ClockGuard and ConfigResolver bound (review fixes)
+
+Review of Tasks 6–8 found three design flaws in the plan's own code (not the implementation):
+1. `ClockGuard.trustedNow` trusted *forward* jumps, so setting the clock to 13:00 during a 09–12 window ended it; and because the trusted time was fed back as `previous`, backwards steps smaller than the tolerance could creep without bound (119 s per tick → 3 h/100 ticks).
+2. A legitimate correction of a fast clock locked in a permanent offset.
+3. `ConfigResolver` released the fallback only when *no* window was active, so back-to-back (09–12, 12–15) or 24/7 schedules made the "bounded" fail-closed unbounded.
+
+New design, replacing Task 7 and Task 8 code entirely:
+
+- **ClockGuard** keeps a sticky **anchor** sample and always projects trusted time from it along the monotonic clock. The anchor moves only on the first sample, after a reboot (monotonic went backwards), or after the wall clock has disagreed with the projection *continuously* for `reconvergeAfter` (24 h). Any disagreement beyond `tolerance` in **either** direction is tamper. Because the anchor is sticky, drift is compared cumulatively, so creep cannot accumulate. Its `State` is `Codable` so the daemon can persist it across restarts (within one boot).
+- **ConfigResolver** records the IDs of the windows active at the moment the live config vanished and keeps enforcing only while one of *those* is still active, with an absolute ceiling of `maxFallback` (24 h).
+- Two minor HostsRegion fixes: trim lines before marker comparison (a marker with trailing whitespace orphaned the region body), and only collapse trailing blank lines when a region was actually removed.
+
+**Files:**
+- Replace: `Sources/FocusGuardCore/ClockGuard.swift`, `Tests/FocusGuardCoreTests/ClockGuardTests.swift`
+- Replace: `Sources/FocusGuardCore/ConfigResolver.swift`, `Tests/FocusGuardCoreTests/ConfigResolverTests.swift`
+- Modify: `Sources/FocusGuardCore/HostsRegion.swift` (`strip` only), `Tests/FocusGuardCoreTests/HostsRegionTests.swift` (add two tests)
+
+- [ ] **Step 1: Replace the ClockGuard tests**
+
+`Tests/FocusGuardCoreTests/ClockGuardTests.swift`:
+```swift
+import XCTest
+@testable import FocusGuardCore
+
+final class ClockGuardTests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    let guardian = ClockGuard(tolerance: 120, reconvergeAfter: 24 * 3600)
+
+    /// Wall clock = t0 + wallOffset; monotonic = mono.
+    func sample(_ wallOffset: TimeInterval, _ mono: TimeInterval) -> ClockSample {
+        ClockSample(wall: t0.addingTimeInterval(wallOffset), monotonic: mono)
+    }
+    var anchored: ClockGuard.State { guardian.step(state: nil, now: sample(0, 500)).state }
+
+    func testFirstSampleIsTrustedAndBecomesAnchor() {
+        let s = guardian.step(state: nil, now: sample(0, 500))
+        XCTAssertEqual(s.trusted, t0)
+        XCTAssertEqual(s.state.anchor, sample(0, 500))
+        XCTAssertNil(s.state.disagreeingSince)
+        XCTAssertFalse(s.tampered)
+    }
+
+    func testNormalProgressFollowsProjectionAndKeepsAnchor() {
+        let s = guardian.step(state: anchored, now: sample(10, 510))
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(10))
+        XCTAssertFalse(s.tampered)
+        XCTAssertEqual(s.state, anchored, "anchor is sticky")
+    }
+
+    func testSleepAdvancesBothClocksAndIsNotTamper() {
+        let s = guardian.step(state: anchored, now: sample(7200, 7700))  // 2 h nap
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(7200))
+        XCTAssertFalse(s.tampered)
+    }
+
+    func testSmallDriftIsToleratedButProjectionStillWins() {
+        let s = guardian.step(state: anchored, now: sample(-30, 510))
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(10))
+        XCTAssertFalse(s.tampered)
+        XCTAssertEqual(s.state.anchor, anchored.anchor)
+    }
+
+    func testBackwardsJumpIsTamperAndKeepsProjection() {
+        let s = guardian.step(state: anchored, now: sample(-3600 + 10, 510))
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(10))
+        XCTAssertTrue(s.tampered)
+        XCTAssertEqual(s.state.disagreeingSince, 510)
+    }
+
+    func testForwardJumpIsTamperToo() {
+        let s = guardian.step(state: anchored, now: sample(3600 + 10, 510))
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(10), "a forward jump must not end a window early")
+        XCTAssertTrue(s.tampered)
+    }
+
+    func testCreepWithinToleranceCannotAccumulate() {
+        // Every 2 s tick the user sets the clock back another 119 s (just under tolerance).
+        var st = anchored
+        for k in 1...100 {
+            let mono = 500 + Double(k) * 2
+            let truth = Double(k) * 2
+            let s = guardian.step(state: st, now: sample(truth - 119 * Double(k), mono))
+            XCTAssertEqual(s.trusted, t0.addingTimeInterval(truth), "tick \(k)")
+            st = s.state
+        }
+    }
+
+    func testLegitimateCorrectionReconvergesAfterGracePeriod() {
+        // Clock was 1 h fast at boot; user fixes it at mono 510.
+        var st = guardian.step(state: nil, now: sample(3600, 500)).state
+        var s = guardian.step(state: st, now: sample(10, 510))
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(3610))
+        XCTAssertTrue(s.tampered)
+        st = s.state
+
+        s = guardian.step(state: st, now: sample(10 + 23 * 3600, 510 + 23 * 3600))
+        XCTAssertTrue(s.tampered, "still projecting after 23 h")
+        st = s.state
+
+        s = guardian.step(state: st, now: sample(10 + 24 * 3600, 510 + 24 * 3600))
+        XCTAssertFalse(s.tampered)
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(10 + 24 * 3600), "wall clock wins after 24 h")
+        XCTAssertEqual(s.state.anchor, sample(10 + 24 * 3600, 510 + 24 * 3600))
+        XCTAssertNil(s.state.disagreeingSince)
+    }
+
+    func testAlternatingTamperNeverReachesGracePeriod() {
+        var st = anchored
+        for i in 1...100 {  // every hour: flip between correct and 2 h behind
+            let truth = Double(i) * 3600
+            let wall = (i % 2 == 0) ? truth : truth - 7200
+            let s = guardian.step(state: st, now: sample(wall, 500 + truth))
+            XCTAssertEqual(s.trusted, t0.addingTimeInterval(truth), "hour \(i)")
+            st = s.state
+        }
+    }
+
+    func testRebootResetsAnchorToWall() {
+        let s = guardian.step(state: anchored, now: sample(600, 50))  // monotonic restarted
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(600))
+        XCTAssertEqual(s.state.anchor, sample(600, 50))
+        XCTAssertFalse(s.tampered)
+    }
+
+    func testStateRoundTripsThroughJSON() throws {
+        let st = ClockGuard.State(anchor: sample(0, 500), disagreeingSince: 510)
+        let data = try JSONEncoder().encode(st)
+        XCTAssertEqual(try JSONDecoder().decode(ClockGuard.State.self, from: data), st)
+    }
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `swift test --filter ClockGuardTests 2>&1 | grep -E "error|Executed" | head -3`
+Expected: compile errors (`step`, `State` not found).
+
+- [ ] **Step 3: Replace ClockGuard**
+
+`Sources/FocusGuardCore/ClockGuard.swift`:
+```swift
+import Foundation
+
+/// A paired reading of the wall clock and a monotonic clock that keeps counting through sleep.
+public struct ClockSample: Codable, Equatable {
+    public var wall: Date
+    public var monotonic: TimeInterval
+
+    public init(wall: Date, monotonic: TimeInterval) {
+        self.wall = wall
+        self.monotonic = monotonic
+    }
+}
+
+/// Defends schedule matching against the wall clock being changed.
+///
+/// Trusted time is always projected from an *anchor* sample along the monotonic clock
+/// (`mach_continuous_time`: counts through sleep, cannot be set). The anchor moves only on the
+/// first sample, after a reboot (monotonic went backwards), or after the wall clock has disagreed
+/// with the projection continuously for `reconvergeAfter` — long enough that a genuine correction
+/// eventually wins, far too long for a clock change to shorten or delay a window. Because the
+/// anchor is sticky, drift is measured cumulatively and small steps cannot creep past `tolerance`.
+public struct ClockGuard {
+    public struct State: Codable, Equatable {
+        public var anchor: ClockSample
+        /// Monotonic time at which the wall clock started disagreeing; nil while it agrees.
+        public var disagreeingSince: TimeInterval?
+
+        public init(anchor: ClockSample, disagreeingSince: TimeInterval? = nil) {
+            self.anchor = anchor
+            self.disagreeingSince = disagreeingSince
+        }
+    }
+
+    public struct Step: Equatable {
+        public var trusted: Date
+        public var state: State
+        public var tampered: Bool
+    }
+
+    public var tolerance: TimeInterval
+    public var reconvergeAfter: TimeInterval
+
+    public init(tolerance: TimeInterval = 120, reconvergeAfter: TimeInterval = 24 * 3600) {
+        self.tolerance = tolerance
+        self.reconvergeAfter = reconvergeAfter
+    }
+
+    public func step(state: State?, now: ClockSample) -> Step {
+        guard let state, now.monotonic >= state.anchor.monotonic else {
+            // First sample, or the machine rebooted: nothing to project from.
+            return Step(trusted: now.wall, state: State(anchor: now), tampered: false)
+        }
+        let projected = state.anchor.wall.addingTimeInterval(now.monotonic - state.anchor.monotonic)
+        let diff = now.wall.timeIntervalSince(projected)
+        if abs(diff) <= tolerance {
+            return Step(trusted: projected, state: State(anchor: state.anchor), tampered: false)
+        }
+        let since = state.disagreeingSince ?? now.monotonic
+        if now.monotonic - since >= reconvergeAfter {
+            return Step(trusted: now.wall, state: State(anchor: now), tampered: false)
+        }
+        return Step(trusted: projected, state: State(anchor: state.anchor, disagreeingSince: since), tampered: true)
+    }
+}
+```
+
+- [ ] **Step 4: Run ClockGuard tests**
+
+Run: `swift test --filter ClockGuardTests 2>&1 | grep -E "failed|Executed"`
+Expected: `Executed 11 tests, with 0 failures`.
+
+- [ ] **Step 5: Replace the ConfigResolver tests**
+
+`Tests/FocusGuardCoreTests/ConfigResolverTests.swift`:
+```swift
+import XCTest
+@testable import FocusGuardCore
+
+final class ConfigResolverTests: XCTestCase {
+    let list = BlockList(name: "l", domains: ["x.com"], appBundleIDs: [])
+    lazy var morning = ScheduleWindow(name: "am", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!, blockListIDs: [list.id])
+    lazy var afternoon = ScheduleWindow(name: "pm", days: [.mon], start: TimeOfDay("12:00")!, end: TimeOfDay("15:00")!, blockListIDs: [list.id])
+    lazy var cfg = Config(blockLists: [list], schedules: [morning])
+    lazy var backToBack = Config(blockLists: [list], schedules: [morning, afternoon])
+    lazy var always = Config(blockLists: [list], schedules: [
+        ScheduleWindow(name: "24/7", days: Set(Weekday.allCases), start: TimeOfDay("00:00")!, end: TimeOfDay("00:00")!, blockListIDs: [list.id])])
+
+    let at10 = LocalMoment(weekday: .mon, minutesSinceMidnight: 10 * 60)
+    let at1230 = LocalMoment(weekday: .mon, minutesSinceMidnight: 12 * 60 + 30)
+    let at16 = LocalMoment(weekday: .mon, minutesSinceMidnight: 16 * 60)
+
+    func testLiveConfigWinsAndBecomesLastGood() {
+        var r = ConfigResolver()
+        let out = r.resolve(live: cfg, at: at10, monotonic: 0)
+        XCTAssertEqual(out.config, cfg)
+        XCTAssertEqual(out.source, .live)
+        XCTAssertEqual(r.lastGood, cfg)
+    }
+
+    func testNothingAtAllYieldsEmpty() {
+        var r = ConfigResolver()
+        let out = r.resolve(live: nil, at: at10, monotonic: 0)
+        XCTAssertEqual(out.config, .empty)
+        XCTAssertEqual(out.source, .none)
+    }
+
+    func testVanishMidWindowKeepsEnforcingLastGood() {
+        var r = ConfigResolver()
+        _ = r.resolve(live: cfg, at: at10, monotonic: 0)
+        let out = r.resolve(live: nil, at: at10, monotonic: 2)
+        XCTAssertEqual(out.config, cfg)
+        XCTAssertEqual(out.source, .lastGood)
+    }
+
+    func testReleasedWhenTheVanishTimeWindowEndsAndStaysReleased() {
+        var r = ConfigResolver()
+        _ = r.resolve(live: cfg, at: at10, monotonic: 0)
+        _ = r.resolve(live: nil, at: at10, monotonic: 2)
+        XCTAssertEqual(r.resolve(live: nil, at: at16, monotonic: 6 * 3600).source, .none)
+        // Next Monday's window must NOT re-arm the fallback.
+        XCTAssertEqual(r.resolve(live: nil, at: at10, monotonic: 7 * 24 * 3600).source, .none)
+    }
+
+    func testBackToBackWindowsDoNotExtendTheFallback() {
+        var r = ConfigResolver()
+        _ = r.resolve(live: backToBack, at: at10, monotonic: 0)
+        XCTAssertEqual(r.resolve(live: nil, at: at10, monotonic: 2).source, .lastGood)
+        // 12:30: the afternoon window is active, but it was not the one active when config vanished.
+        XCTAssertEqual(r.resolve(live: nil, at: at1230, monotonic: 2.5 * 3600).source, .none)
+    }
+
+    func testVanishDuringAfternoonIsBoundedByAfternoon() {
+        var r = ConfigResolver()
+        _ = r.resolve(live: backToBack, at: at1230, monotonic: 0)
+        XCTAssertEqual(r.resolve(live: nil, at: at1230, monotonic: 2).source, .lastGood)
+        XCTAssertEqual(r.resolve(live: nil, at: at16, monotonic: 4 * 3600).source, .none)
+    }
+
+    func testAlwaysOnScheduleHitsTheAbsoluteCeiling() {
+        var r = ConfigResolver(maxFallback: 24 * 3600)
+        _ = r.resolve(live: always, at: at10, monotonic: 0)
+        XCTAssertEqual(r.resolve(live: nil, at: at10, monotonic: 2).source, .lastGood)
+        XCTAssertEqual(r.resolve(live: nil, at: at16, monotonic: 23 * 3600).source, .lastGood)
+        XCTAssertEqual(r.resolve(live: nil, at: at16, monotonic: 2 + 24 * 3600).source, .none)
+    }
+
+    func testLiveConfigReturningReArmsFallback() {
+        var r = ConfigResolver()
+        _ = r.resolve(live: cfg, at: at10, monotonic: 0)
+        _ = r.resolve(live: nil, at: at16, monotonic: 1)   // released immediately: nothing active
+        _ = r.resolve(live: cfg, at: at10, monotonic: 2)   // live is back
+        XCTAssertEqual(r.resolve(live: nil, at: at10, monotonic: 3).source, .lastGood)
+    }
+
+    func testSeededLastGoodIsUsedOnColdStart() {
+        var r = ConfigResolver(lastGood: cfg)
+        XCTAssertEqual(r.resolve(live: nil, at: at10, monotonic: 0).source, .lastGood)
+    }
+}
+```
+
+- [ ] **Step 6: Run to verify failure**
+
+Run: `swift test --filter ConfigResolverTests 2>&1 | grep -E "error|Executed" | head -3`
+Expected: compile errors (`monotonic:` label, `maxFallback:`).
+
+- [ ] **Step 7: Replace ConfigResolver**
+
+`Sources/FocusGuardCore/ConfigResolver.swift`:
+```swift
+import Foundation
+
+/// Decides which config to enforce when the live one is unreadable.
+///
+/// Bounded fail-closed: keep enforcing the last-known-good config, but only while one of the
+/// windows that was active *when the live config vanished* is still active, and never longer
+/// than `maxFallback`. After that the fallback is released and stays released until a live
+/// config is read again. A bug can therefore never lock the user out indefinitely, even with
+/// back-to-back or 24/7 schedules.
+public struct ConfigResolver {
+    public enum Source: Equatable { case live, lastGood, none }
+
+    public private(set) var lastGood: Config?
+    public private(set) var fallbackReleased = false
+    public var maxFallback: TimeInterval
+
+    private var fallbackWindowIDs: Set<UUID>?
+    private var fallbackSince: TimeInterval?
+
+    public init(lastGood: Config? = nil, maxFallback: TimeInterval = 24 * 3600) {
+        self.lastGood = lastGood
+        self.maxFallback = maxFallback
+    }
+
+    public mutating func resolve(live: Config?, at moment: LocalMoment, monotonic: TimeInterval) -> (config: Config, source: Source) {
+        if let live {
+            lastGood = live
+            fallbackReleased = false
+            fallbackWindowIDs = nil
+            fallbackSince = nil
+            return (live, .live)
+        }
+        guard let lastGood, !fallbackReleased else { return (.empty, .none) }
+
+        if fallbackWindowIDs == nil {
+            fallbackWindowIDs = Set(lastGood.schedules.filter { $0.isActive(at: moment) }.map(\.id))
+            fallbackSince = monotonic
+        }
+        let ids = fallbackWindowIDs ?? []
+        let since = fallbackSince ?? monotonic
+        let stillActive = lastGood.schedules.contains { ids.contains($0.id) && $0.isActive(at: moment) }
+        let expired = monotonic - since >= maxFallback
+
+        if !stillActive || expired {
+            fallbackReleased = true
+            fallbackWindowIDs = nil
+            fallbackSince = nil
+            return (.empty, .none)
+        }
+        return (lastGood, .lastGood)
+    }
+}
+```
+
+- [ ] **Step 8: Run ConfigResolver tests**
+
+Run: `swift test --filter ConfigResolverTests 2>&1 | grep -E "failed|Executed"`
+Expected: `Executed 9 tests, with 0 failures`.
+
+- [ ] **Step 9: HostsRegion strip fixes — tests first**
+
+Add to `Tests/FocusGuardCoreTests/HostsRegionTests.swift`:
+```swift
+    func testMarkersWithTrailingWhitespaceStillDelimitTheRegion() {
+        let contents = "a\n" + HostsRegion.startMarker + " \n0.0.0.0 x.com\n" + HostsRegion.endMarker + "\t\nb\n"
+        XCTAssertEqual(HostsRegion.strip(contents), "a\nb\n")
+    }
+
+    func testStripLeavesFilesWithoutARegionByteIdentical() {
+        XCTAssertEqual(HostsRegion.strip("a\n\n\n"), "a\n\n\n")
+        XCTAssertEqual(HostsRegion.apply(domains: [], to: "a\n\n\n"), "a\n\n\n")
+    }
+```
+Run: `swift test --filter HostsRegionTests 2>&1 | grep -E "failed|Executed"` → expect 2 failures.
+
+- [ ] **Step 10: Fix `strip`**
+
+Replace `strip` in `Sources/FocusGuardCore/HostsRegion.swift`:
+```swift
+    /// Removes the marked region. A missing end marker strips to end of file. A file with no
+    /// region is returned unchanged.
+    public static func strip(_ contents: String) -> String {
+        var kept: [Substring] = []
+        var inRegion = false
+        var sawRegion = false
+        for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == startMarker { inRegion = true; sawRegion = true; continue }
+            if trimmed == endMarker { inRegion = false; continue }
+            if !inRegion { kept.append(line) }
+        }
+        guard sawRegion else { return contents }
+        if inRegion, !kept.isEmpty { kept.append("") }  // unterminated region: keep the preceding line's newline
+        var result = kept.joined(separator: "\n")
+        while result.hasSuffix("\n\n") { result.removeLast() }
+        return result
+    }
+```
+Run: `swift test --filter HostsRegionTests 2>&1 | grep -E "failed|Executed"` → `Executed 12 tests, with 0 failures`.
+
+- [ ] **Step 11: Full suite and commit**
+
+Run: `swift test 2>&1 | grep -E "failed|error:|Executed"`
+Expected: `Executed 58 tests, with 0 failures`.
+
+```bash
+git add Sources/FocusGuardCore Tests/FocusGuardCoreTests
+git commit -m "Core: sticky-anchor clock guard, window-bounded fallback, hosts strip fixes
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 9: Ports (protocols) and test fakes
 
 **Files:**
@@ -1315,6 +1741,27 @@ final class ReconcilerTests: XCTestCase {
         let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(8, 0), monotonic: 102))
         XCTAssertFalse(r.activeSet.isEmpty, "projected time is still 11:00:02")
         XCTAssertTrue(hosts.contents.contains("0.0.0.0 reddit.com"))
+        XCTAssertEqual(log.errors.count, 1, "tamper logged once, not every tick")
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(8, 0, 2), monotonic: 104))
+        XCTAssertEqual(log.errors.count, 1)
+    }
+
+    func testClockJumpForwardDoesNotReleaseWindow() {
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(11, 0), monotonic: 100))
+        let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(14, 0), monotonic: 102))
+        XCTAssertFalse(r.activeSet.isEmpty)
+        XCTAssertTrue(hosts.contents.contains("0.0.0.0 reddit.com"))
+    }
+
+    func testClockStateIsExposedAndSeedable() {
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(11, 0), monotonic: 100))
+        let saved = sut.clockState
+        XCTAssertNotNil(saved)
+        // A restarted reconciler seeded with the saved state still resists a rewind.
+        let restarted = Reconciler(hosts: hosts, dns: dns, processes: procs, log: log,
+                                   clockState: saved, killGrace: 3, calendar: cal)
+        let r = restarted.tick(live: cfg, clock: ClockSample(wall: monday(8, 0), monotonic: 102))
+        XCTAssertFalse(r.activeSet.isEmpty)
     }
 
     func testConfigVanishingMidWindowKeepsBlockingUntilWindowEnds() {
@@ -1381,18 +1828,22 @@ public final class Reconciler {
     private let calendar: Calendar
 
     private var resolver: ConfigResolver
-    private var lastClock: ClockSample?
+    /// Persisted by the daemon so a restart within the same boot cannot reset the clock anchor.
+    public private(set) var clockState: ClockGuard.State?
+    private var wasTampered = false
     /// pid → monotonic deadline after which SIGKILL is sent.
     private var pendingKill: [Int32: TimeInterval] = [:]
 
     public init(hosts: HostsFileStore, dns: DNSCacheFlusher, processes: ProcessController, log: ReconcilerLog,
-                clockGuard: ClockGuard = ClockGuard(), killGrace: TimeInterval = 3,
+                clockGuard: ClockGuard = ClockGuard(), clockState: ClockGuard.State? = nil,
+                killGrace: TimeInterval = 3,
                 resolver: ConfigResolver = ConfigResolver(), calendar: Calendar = .current) {
         self.hosts = hosts
         self.dns = dns
         self.processes = processes
         self.log = log
         self.clockGuard = clockGuard
+        self.clockState = clockState
         self.killGrace = killGrace
         self.resolver = resolver
         self.calendar = calendar
@@ -1402,14 +1853,19 @@ public final class Reconciler {
 
     @discardableResult
     public func tick(live: Config?, clock: ClockSample) -> Result {
-        let trusted = clockGuard.trustedNow(previous: lastClock, current: clock)
-        if trusted != clock.wall {
-            log.error("wall clock \(clock.wall) disagrees with monotonic projection; using \(trusted)")
+        let step = clockGuard.step(state: clockState, now: clock)
+        clockState = step.state
+        if step.tampered != wasTampered {
+            wasTampered = step.tampered
+            if step.tampered {
+                log.error("wall clock \(clock.wall) disagrees with monotonic projection; using \(step.trusted) until they agree")
+            } else {
+                log.info("wall clock agrees with projection again")
+            }
         }
-        lastClock = ClockSample(wall: trusted, monotonic: clock.monotonic)
 
-        let moment = LocalMoment(date: trusted, calendar: calendar)
-        let (config, source) = resolver.resolve(live: live, at: moment)
+        let moment = LocalMoment(date: step.trusted, calendar: calendar)
+        let (config, source) = resolver.resolve(live: live, at: moment, monotonic: clock.monotonic)
         let active = config.activeSet(at: moment)
 
         let hostsChanged = reconcileHosts(domains: active.domains)
@@ -1483,7 +1939,7 @@ public final class Reconciler {
 - [ ] **Step 4: Run the whole suite**
 
 Run: `swift test 2>&1 | grep -E "failed|error:|Executed"`
-Expected: `Executed 46 tests, with 0 failures` (count may differ by one or two; zero failures is the requirement).
+Expected: `Executed 70 tests, with 0 failures` (count may differ by one or two; zero failures is the requirement).
 
 - [ ] **Step 5: Commit**
 
@@ -1519,6 +1975,7 @@ enum Paths {
     static let supportDir = "/Library/Application Support/FocusGuard"
     static let config = supportDir + "/config.json"
     static let lastGood = supportDir + "/last-good.json"
+    static let clockState = supportDir + "/clock-state.json"
     static let hosts = "/etc/hosts"
     static let launchdLabel = "com.focusguard.daemon"
 }
@@ -1712,6 +2169,18 @@ enum ConfigFile {
         guard let data = try? config.encodeJSON() else { return }
         FileManager.default.createFile(atPath: Paths.lastGood, contents: data, attributes: [.posixPermissions: 0o600])
     }
+
+    /// Clock-guard anchor, root-only. Only meaningful within one boot; ClockGuard discards it
+    /// itself when the monotonic clock has gone backwards.
+    static func loadClockState() -> ClockGuard.State? {
+        guard let data = FileManager.default.contents(atPath: Paths.clockState) else { return nil }
+        return try? JSONDecoder().decode(ClockGuard.State.self, from: data)
+    }
+
+    static func saveClockState(_ state: ClockGuard.State) {
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        FileManager.default.createFile(atPath: Paths.clockState, contents: data, attributes: [.posixPermissions: 0o600])
+    }
 }
 ```
 
@@ -1757,13 +2226,16 @@ final class Daemon {
     private var currentInterval: TimeInterval = 0
     private var signalSources: [DispatchSourceSignal] = []
     private var lastSavedLastGood: Config?
+    private var lastSavedClockState: ClockGuard.State?
 
     init() {
+        lastSavedClockState = ConfigFile.loadClockState()
         reconciler = Reconciler(
             hosts: EtcHostsStore(path: Paths.hosts),
             dns: DSCacheFlusher(),
             processes: LibprocProcessController(),
             log: log,
+            clockState: lastSavedClockState,
             resolver: ConfigResolver(lastGood: ConfigFile.loadLastGood()))
     }
 
@@ -1774,6 +2246,11 @@ final class Daemon {
         if let good = reconciler.lastGoodConfig, good != lastSavedLastGood {
             ConfigFile.saveLastGood(good)
             lastSavedLastGood = good
+        }
+        // The anchor changes rarely (first run, reboot, 24 h reconverge), so this almost never writes.
+        if let state = reconciler.clockState, state != lastSavedClockState {
+            ConfigFile.saveClockState(state)
+            lastSavedClockState = state
         }
         if result.hostsChanged || !result.terminated.isEmpty || !result.killed.isEmpty {
             log.info("tick: source=\(result.source) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count)")

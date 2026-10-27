@@ -205,14 +205,18 @@ deferred.
   - Recovery path, documented in the README: `sudo launchctl bootout
     system/<label>` stops the daemon; the daemon's shutdown handler clears its
     hosts region.
-- **Clock tamper check (new):** every ScheduleWindow evaluation uses wall-clock
-  time, but the daemon also records `(wallClock, mach_continuous_time)` at each
-  tick in memory and in `last-good.json`. If wall clock moved **backwards**
-  relative to the monotonic delta by more than 2 minutes, the daemon treats the
-  current time as `lastWall + monotonicDelta` (i.e. the time it *should* be)
-  for schedule matching until the two agree again. Forward jumps are trusted
-  (sleep, NTP corrections are forward or tiny). Changing the clock cannot end a
-  window early — the open-since-2012 SelfControl bug.
+- **Clock tamper check (new, revised after review):** schedule matching never
+  uses the raw wall clock. The daemon keeps a sticky **anchor**
+  `(wallClock, mach_continuous_time)` and always projects "now" from it along
+  the monotonic clock, which counts through sleep and cannot be set. The anchor
+  moves only on the first sample, after a reboot (monotonic went backwards), or
+  after the wall clock has disagreed with the projection **continuously for
+  24 h** (so a genuine correction eventually wins). A disagreement beyond
+  2 minutes in **either** direction is tamper: a forward jump cannot end a
+  window early and a backward jump cannot delay one; because the anchor is
+  sticky, small repeated steps cannot creep past the tolerance. The anchor is
+  persisted root-only in `clock-state.json` so a daemon restart within one boot
+  cannot reset it. This closes the open-since-2012 SelfControl bug.
 - **Malformed config on an otherwise-readable file:** same as unreadable —
   last-known-good, log the error, do not crash.
 - **Manual `/etc/hosts` edits:** preserved. The daemon reconciles only its
