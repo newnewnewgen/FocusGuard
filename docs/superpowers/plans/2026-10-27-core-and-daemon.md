@@ -707,7 +707,7 @@ final class HostsRegionTests: XCTestCase {
 
     func testRenderIsSortedAndCoversWwwAndIPv6() {
         let out = HostsRegion.render(domains: ["youtube.com", "reddit.com"])
-        XCTAssertEqual(out, """
+        XCTAssertTrue(out.hasPrefix("""
         0.0.0.0 reddit.com
         0.0.0.0 www.reddit.com
         :: reddit.com
@@ -716,21 +716,25 @@ final class HostsRegionTests: XCTestCase {
         0.0.0.0 www.youtube.com
         :: youtube.com
         :: www.youtube.com
-        """)
+
+        """), "got:\n\(out)")
+    }
+
+    func testRenderSinkholesDoHEndpointsAfterDomains() {
+        let out = HostsRegion.render(domains: ["reddit.com"])
+        XCTAssertTrue(out.contains("0.0.0.0 dns.google"))
+        XCTAssertTrue(out.contains(":: mozilla.cloudflare-dns.com"))
+        XCTAssertLessThan(out.range(of: "reddit.com")!.lowerBound, out.range(of: "dns.google")!.lowerBound)
+    }
+
+    func testRenderEmptyHasNoDoHLines() {
+        XCTAssertEqual(HostsRegion.render(domains: []), "")
     }
 
     func testApplyAppendsRegionAndPreservesRest() {
         let out = HostsRegion.apply(domains: ["reddit.com"], to: base)
-        XCTAssertTrue(out.hasPrefix(base))
-        XCTAssertEqual(out, base + """
-        # FOCUSGUARD START
-        0.0.0.0 reddit.com
-        0.0.0.0 www.reddit.com
-        :: reddit.com
-        :: www.reddit.com
-        # FOCUSGUARD END
-
-        """)
+        XCTAssertTrue(out.hasPrefix(base + "# FOCUSGUARD START\n0.0.0.0 reddit.com\n"))
+        XCTAssertTrue(out.hasSuffix("# FOCUSGUARD END\n"))
     }
 
     func testApplyReplacesExistingRegionInPlace() {
@@ -785,10 +789,19 @@ public enum HostsRegion {
     public static let startMarker = "# FOCUSGUARD START"
     public static let endMarker = "# FOCUSGUARD END"
 
-    /// Body of the region: both A (0.0.0.0) and AAAA (::) sinks for each domain and its www. form.
+    /// Public DNS-over-HTTPS resolvers. Sinkholed whenever any block is active so Chrome
+    /// (automatic secure DNS) and Firefox (default TRR mode) fall back to the system resolver,
+    /// which honours this file. Zero runtime cost; replaces the need for a browser tab watcher.
+    public static let dohEndpoints: [String] = [
+        "dns.google", "cloudflare-dns.com", "mozilla.cloudflare-dns.com",
+        "dns.quad9.net", "doh.opendns.com", "dns.nextdns.io",
+    ]
+
+    /// Body of the region: both A (0.0.0.0) and AAAA (::) sinks for each domain and its www. form,
+    /// followed by the DoH endpoints.
     public static func render(domains: Set<String>) -> String {
         var lines: [String] = []
-        for d in domains.sorted() {
+        for d in domains.sorted() + (domains.isEmpty ? [] : dohEndpoints) {
             lines.append("0.0.0.0 \(d)")
             lines.append("0.0.0.0 www.\(d)")
             lines.append(":: \(d)")
@@ -805,6 +818,7 @@ public enum HostsRegion {
         let base = (stripped.isEmpty || stripped.hasSuffix("\n")) ? stripped : stripped + "\n"
         return base + region + "\n"
     }
+
 
     /// Removes the marked region. A missing end marker strips to end of file.
     public static func strip(_ contents: String) -> String {
@@ -825,7 +839,7 @@ public enum HostsRegion {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `swift test --filter HostsRegionTests 2>&1 | grep -E "failed|Executed"`
-Expected: `Executed 8 tests, with 0 failures`.
+Expected: `Executed 10 tests, with 0 failures`.
 
 - [ ] **Step 5: Commit**
 
@@ -1300,14 +1314,14 @@ final class ReconcilerTests: XCTestCase {
         // User sets the clock back to 08:00 two seconds later.
         let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(8, 0), monotonic: 102))
         XCTAssertFalse(r.activeSet.isEmpty, "projected time is still 11:00:02")
-        XCTAssertTrue(hosts.contents.contains("reddit.com"))
+        XCTAssertTrue(hosts.contents.contains("0.0.0.0 reddit.com"))
     }
 
     func testConfigVanishingMidWindowKeepsBlockingUntilWindowEnds() {
         _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(11, 0), monotonic: 100))
         let r = sut.tick(live: nil, clock: ClockSample(wall: monday(11, 30), monotonic: 1900))
         XCTAssertEqual(r.source, .lastGood)
-        XCTAssertTrue(hosts.contents.contains("reddit.com"))
+        XCTAssertTrue(hosts.contents.contains("0.0.0.0 reddit.com"))
 
         let r2 = sut.tick(live: nil, clock: ClockSample(wall: monday(12, 1), monotonic: 3760))
         XCTAssertEqual(r2.source, .none)
