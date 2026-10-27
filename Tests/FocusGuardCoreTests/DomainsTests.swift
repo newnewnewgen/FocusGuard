@@ -31,4 +31,18 @@ final class DomainsTests: XCTestCase {
         XCTAssertFalse(DomainNormalizer.host("notreddit.com", isUnder: "reddit.com"))
         XCTAssertFalse(DomainNormalizer.host("reddit.com.evil.io", isUnder: "reddit.com"))
     }
+
+    func testRejectsNonHostnames() {
+        XCTAssertEqual(DomainNormalizer.normalize("[::1]"), "")
+        XCTAssertEqual(DomainNormalizer.normalize("http:/reddit.com"), "")
+        XCTAssertEqual(DomainNormalizer.normalize("www."), "")
+        XCTAssertEqual(DomainNormalizer.normalize("reddit .com"), "")
+        XCTAssertEqual(DomainNormalizer.normalize("localhost"), "", "no dot → not a public hostname")
+    }
+
+    func testStripsUserinfoAndLeadingDots() {
+        XCTAssertEqual(DomainNormalizer.normalize("user:pass@reddit.com"), "reddit.com")
+        XCTAssertEqual(DomainNormalizer.normalize("https://user@reddit.com/"), "reddit.com")
+        XCTAssertEqual(DomainNormalizer.normalize(".reddit.com"), "reddit.com")
+    }
 }

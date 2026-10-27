@@ -36,4 +36,11 @@ final class ActiveSetTests: XCTestCase {
         let cfg = Config(blockLists: [junk], schedules: [a])
         XCTAssertEqual(cfg.activeSet(at: mon10).domains, [])
     }
+
+    func testBundleIDsAreTrimmedAndEmptyDropped() {
+        let junk = BlockList(name: "j", domains: [], appBundleIDs: ["  com.example.a ", ""])
+        let a = ScheduleWindow(name: "a", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!, blockListIDs: [junk.id])
+        let cfg = Config(blockLists: [junk], schedules: [a])
+        XCTAssertEqual(cfg.activeSet(at: mon10).bundleIDs, ["com.example.a"])
+    }
 }

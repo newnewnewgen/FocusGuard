@@ -20,7 +20,7 @@ extension Config {
         var out = ActiveSet.empty
         for list in blockLists where activeListIDs.contains(list.id) {
             out.domains.formUnion(list.domains.map(DomainNormalizer.normalize).filter { !$0.isEmpty })
-            out.bundleIDs.formUnion(list.appBundleIDs)
+            out.bundleIDs.formUnion(list.appBundleIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
         }
         return out
     }
