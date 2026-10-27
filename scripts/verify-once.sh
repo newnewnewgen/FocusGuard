@@ -12,8 +12,9 @@ BIN=.build/debug/focusguardd
 swift build 2>&1 | tail -1
 sudo -v   # one password prompt up front
 
-echo "--- backup /etc/hosts"
+echo "--- backup /etc/hosts (minus any region left by an earlier aborted run)"
 sudo cp /etc/hosts /tmp/hosts.before
+sudo sed -i '' '/^# FOCUSGUARD START/,/^# FOCUSGUARD END/d' /tmp/hosts.before
 
 echo "--- install example config"
 sudo mkdir -p "/Library/Application Support/FocusGuard"

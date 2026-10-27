@@ -122,9 +122,12 @@ spoofed.
 
 ### 5a. Daemon (root): hosts + apps
 
-The daemon runs an idempotent reconciliation loop every ~20 seconds, on
-config-file change, and on **system wake** (so a window boundary that passed
-during sleep is applied immediately). Each tick rebuilds desired state from
+The daemon runs an idempotent reconciliation loop every **2 seconds while an
+app block is active and every 30 seconds otherwise** (battery: `/etc/hosts` is
+only *written* on diff and the process table is only enumerated while some
+bundle ID is blocked, so an idle tick is one small file read). Timers use
+wall-clock deadlines, so a boundary crossed during sleep is honoured within
+one tick of waking. Each tick rebuilds desired state from
 scratch and converges to it, so a crash + relaunch mid-window simply
 re-converges with no stuck state to repair.
 
@@ -139,9 +142,15 @@ Each tick:
    # FOCUSGUARD START
    0.0.0.0 reddit.com
    0.0.0.0 www.reddit.com
+   :: reddit.com
+   :: www.reddit.com
+   0.0.0.0 dns.google
+   …
    # FOCUSGUARD END
    ```
-   Desired content = one `0.0.0.0` line (plus a `www.` line) per active domain.
+   Desired content = `0.0.0.0` and `::` lines, each also for `www.`, per active
+   domain, followed by the public DoH resolver hostnames whenever the domain set
+   is non-empty.
    Write the file only if the region's desired content differs from current.
    After writing, flush DNS (`dscacheutil -flushcache; killall -HUP
    mDNSResponder`). The daemon owns **only** the marked region; all other
@@ -153,12 +162,10 @@ Each tick:
 4. **Outside all windows** — the marked region is emptied and no apps are
    killed.
 
-**Apps (event-driven, in addition to the sweep):** the daemon subscribes to
-`NSWorkspace.shared.notificationCenter` `didLaunchApplicationNotification`.
-When a blocked bundle ID launches during an active window it is terminated
-immediately, so the user sees at most a flash rather than up to 20 s of the
-app. The 20 s sweep remains the safety net for apps already running when a
-window opens, and for any missed notification.
+**Apps (event-driven, Plan 2):** the user-session app subscribes to
+`NSWorkspace.didLaunchApplicationNotification` and terminates a blocked bundle
+ID the instant it launches. The daemon's 2 s sweep is the backstop and the
+only layer that survives the app being quit.
 
 ### 5b. App (user session): browser tab watcher — **DEFERRED, not scheduled**
 
@@ -271,15 +278,13 @@ deferred.
 
 ## 9. Open Implementation Questions (resolve during planning)
 
-- Exact directory/file permission scheme for the shared config path so a
-  user-level app can write a file a root daemon reads.
-- Whether to watch the config file (FSEvents) in addition to the 20s poll, or
-  rely on the poll alone for v1 simplicity.
+- *(resolved)* `/Library/Application Support/FocusGuard/` is `root:admin 0775`,
+  `config.json` `0664`; `state/` is `root:wheel 0700` holding `last-good.json`
+  and `clock-state.json`. Verified on 2026-10-27.
+- *(resolved)* No file watcher; the daemon re-reads `config.json` every tick.
 - Confirm `SMAppService.daemon` registration succeeds from `/Applications` on
   macOS 26.3.
-- Whether the daemon (a non-GUI process running as root) receives
-  `NSWorkspace` launch notifications reliably, or whether the event-driven app
-  kill should be delegated to the user-session app (with the daemon's sweep as
-  backstop). Decide by spike.
+- *(resolved)* Event-driven app kill lives in the Plan 2 app; the daemon
+  enumerates with libproc (works without a window server) on a 2 s sweep.
 - Exact AppleScript per browser family for "all tabs with URLs", and whether
   `NSAppleScript` or `osascript` subprocess is more robust under TCC.
