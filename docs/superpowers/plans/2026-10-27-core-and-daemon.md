@@ -2047,6 +2047,116 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 10b: Latch failure logging; don't re-SIGTERM an already-SIGKILLed pid (review fixes)
+
+Review of Task 10 found two log-volume problems on persistent failure paths at a 2 s tick: a hosts read/write failure logged every tick, and a process that survives SIGKILL got a fresh SIGTERM + log line every tick. Normal operation was already quiet.
+
+**Files:**
+- Modify: `Sources/FocusGuardCore/Reconciler.swift`
+- Modify: `Tests/FocusGuardCoreTests/ReconcilerTests.swift`, `Tests/FocusGuardCoreTests/Fakes.swift`
+
+- [ ] **Step 1: Tests first**
+
+Add to `Fakes.swift`:
+```swift
+/// A process that ignores SIGKILL (protected or zombie): stays in the list after kill.
+final class StubbornProcesses: ProcessController {
+    var apps: [RunningApp] = []
+    var terminated: [Int32] = []
+    var killed: [Int32] = []
+    func runningApps() -> [RunningApp] { apps }
+    func terminate(pid: Int32) { terminated.append(pid) }
+    func kill(pid: Int32) { killed.append(pid) }
+}
+```
+Add to `ReconcilerTests`:
+```swift
+    func testPersistentHostsFailureLogsOnceAndRecoveryOnce() {
+        hosts.failReads = true
+        for i in 0..<3 {
+            _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, i * 2), monotonic: 100 + Double(i * 2)))
+        }
+        XCTAssertEqual(log.errors.count, 1, "latched: one error for a persistent failure")
+        hosts.failReads = false
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 8), monotonic: 108))
+        XCTAssertEqual(log.errors.count, 1)
+        XCTAssertTrue(log.infos.contains { $0.contains("recovered") })
+        XCTAssertTrue(hosts.contents.contains("0.0.0.0 reddit.com"))
+    }
+
+    func testUnkillableAppIsNotReSignalledEveryTick() {
+        let stubborn = StubbornProcesses()
+        stubborn.apps = [RunningApp(pid: 42, bundleID: "com.example.slack")]
+        let r = Reconciler(hosts: hosts, dns: dns, processes: stubborn, log: log, killGrace: 3, calendar: cal)
+        for i in 0..<10 {
+            _ = r.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, i * 2), monotonic: 100 + Double(i * 2)))
+        }
+        XCTAssertEqual(stubborn.terminated, [42])
+        XCTAssertEqual(stubborn.killed, [42])
+        XCTAssertEqual(log.infos.filter { $0.contains("pid 42") }.count, 2, "one terminate line, one kill line")
+    }
+```
+Run: `swift test --filter ReconcilerTests 2>&1 | grep -E "failed|Executed"` → 2 failures.
+
+- [ ] **Step 2: Implement**
+
+In `Reconciler.swift` add a stored property next to `wasTampered`:
+```swift
+    private var hostsFailing = false
+```
+Replace `reconcileHosts` with:
+```swift
+    private func reconcileHosts(domains: Set<String>) -> Bool {
+        do {
+            let current = try hosts.read()
+            let desired = HostsRegion.apply(domains: domains, to: current)
+            var changed = false
+            if desired != current {
+                try hosts.write(desired)
+                dns.flush()
+                log.info("hosts region updated: \(domains.count) domain(s)")
+                changed = true
+            }
+            if hostsFailing {
+                hostsFailing = false
+                log.info("hosts access recovered")
+            }
+            return changed
+        } catch {
+            // Latched: a persistent failure at a 2 s tick must not log every tick.
+            if !hostsFailing {
+                hostsFailing = true
+                log.error("hosts access failed: \(error)")
+            }
+            return false
+        }
+    }
+```
+In `reconcileApps`, change the comment on `pendingKill` to `/// pid → monotonic deadline for SIGKILL; `.infinity` once SIGKILL has been sent (waiting for it to disappear).` and replace the `if let deadline = pendingKill[app.pid]` block with:
+```swift
+            if let deadline = pendingKill[app.pid] {
+                if deadline.isFinite, monotonic >= deadline {
+                    processes.kill(pid: app.pid)
+                    pendingKill[app.pid] = .infinity
+                    killed.append(app.pid)
+                    log.info("killed \(id) pid \(app.pid)")
+                }
+            } else {
+```
+(The `else` branch that sends SIGTERM is unchanged. `pendingKill` is still pruned to running pids at the top of the function, so a pid that finally exits is forgotten and a relaunch gets a fresh SIGTERM.)
+
+- [ ] **Step 3: Run and commit**
+
+Run: `swift test 2>&1 | grep -E "failed|error:|Executed"` → `Executed 74 tests, with 0 failures`.
+```bash
+git add Sources/FocusGuardCore/Reconciler.swift Tests/FocusGuardCoreTests
+git commit -m "Core: latch hosts-failure logging; no re-signal after SIGKILL
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 11: Daemon — real adapters
 
 No unit tests here: these are thin wrappers over the OS. They are verified by `focusguardd once` in Task 13.
