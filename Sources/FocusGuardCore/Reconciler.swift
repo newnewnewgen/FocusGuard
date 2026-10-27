@@ -23,6 +23,7 @@ public final class Reconciler {
     /// Persisted by the daemon so a restart within the same boot cannot reset the clock anchor.
     public private(set) var clockState: ClockGuard.State?
     private var wasTampered = false
+    private var lastSource: ConfigResolver.Source?
     private var hostsFailing = false
     /// pid → monotonic deadline for SIGKILL; `.infinity` once SIGKILL has been sent (waiting for it to disappear).
     private var pendingKill: [Int32: TimeInterval] = [:]
@@ -59,6 +60,14 @@ public final class Reconciler {
 
         let moment = LocalMoment(date: step.trusted, calendar: calendar)
         let (config, source) = resolver.resolve(live: live, at: moment, monotonic: clock.monotonic)
+        if source != lastSource {
+            lastSource = source
+            switch source {
+            case .live: log.info("config source: live")
+            case .lastGood: log.error("config unreadable; enforcing last-known-good until its window ends")
+            case .none: log.error("no readable config and no fallback; nothing is enforced")
+            }
+        }
         let active = config.activeSet(at: moment)
 
         let hostsChanged = reconcileHosts(domains: active.domains)

@@ -130,6 +130,17 @@ final class ReconcilerTests: XCTestCase {
         XCTAssertEqual(hosts.contents, base)
     }
 
+    func testConfigSourceTransitionsAreLoggedOnce() {
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(11, 0), monotonic: 100))
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(11, 0, 2), monotonic: 102))
+        XCTAssertEqual(log.infos.filter { $0.contains("config source: live") }.count, 1)
+        _ = sut.tick(live: nil, clock: ClockSample(wall: monday(11, 1), monotonic: 160))
+        _ = sut.tick(live: nil, clock: ClockSample(wall: monday(11, 2), monotonic: 220))
+        XCTAssertEqual(log.errors.filter { $0.contains("last-known-good") }.count, 1, "latched")
+        _ = sut.tick(live: nil, clock: ClockSample(wall: monday(12, 1), monotonic: 3760))
+        XCTAssertEqual(log.errors.filter { $0.contains("nothing is enforced") }.count, 1)
+    }
+
     func testHostsReadFailureIsLoggedNotFatal() {
         hosts.failReads = true
         let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))

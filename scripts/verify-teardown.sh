@@ -2,7 +2,7 @@
 # Just the SIGTERM-teardown check from verify-launchd.sh (~50 s): enter a window, wait for the
 # idle tick to pick it up, bootout the daemon, confirm it cleared its hosts region on the way
 # down, re-bootstrap it, disable the window.
-set -uo pipefail
+set -uo pipefail   # no -e: check() collects failures and the script reports them all
 cd "$(dirname "$0")/.."
 LABEL=com.focusguard.daemon
 CFG="/Library/Application Support/FocusGuard/config.json"

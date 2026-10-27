@@ -60,7 +60,7 @@ targets plus a shared logic module, in one repository:
 
 | Component | Kind | Runs as | Responsibility |
 |-----------|------|---------|----------------|
-| `FocusGuard.app` | SwiftUI menu-bar app | User, **KeepAlive login item** | Edit config; show status; install the daemon; **run the browser tab watcher (§5b)** |
+| `FocusGuard.app` | SwiftUI menu-bar app | User, **KeepAlive login item** | Edit config; show status; install the daemon; event-driven app kill (Plan 2). *(Tab watcher §5b deferred.)* |
 | `focusguardd` | Swift CLI executable | **root** via `launchd` | Read config; enforce hosts + app kills; no UI |
 | `FocusGuardCore` | Swift module (library) | — | Pure logic shared by both: config models, schedule matching, active-set computation, hosts-region diffing, URL matching, clock-tamper logic. All unit tests live here. |
 
@@ -73,9 +73,8 @@ targets plus a shared logic module, in one repository:
   relaunches it. macOS shows the approval in System Settings → Login Items.
 - The daemon is configured with `RunAtLoad` + `KeepAlive` so it starts at boot
   and relaunches if killed or if it crashes.
-- The app requests **Automation** permission for each supported browser the
-  first time it needs to script it (standard TCC prompt). Without it the tab
-  watcher is inert and the hosts layer alone applies.
+- *(Deferred with §5b)* Automation permission per browser would only be needed
+  by the tab watcher; v1 requests none.
 - Uninstall: the app calls `SMAppService` unregister for both; the daemon
   cleans its `/etc/hosts` region on shutdown.
 - The two layers are independent: killing the app does not weaken the hosts
@@ -205,10 +204,13 @@ deferred.
   - on daemon start with no readable config, reads a root-owned
     `last-good.json` snapshot the daemon writes beside the config after every
     successful parse, and enforces that;
-  - but the fail-closed state is **bounded**: it persists only until the end of
-    the window that was active when the config became unreadable (per the
-    last-good schedule). Once no window is active, everything is released.
-    There is no way for a bug to produce an indefinite lockout.
+  - but the fail-closed state is **bounded**: it persists only while a window
+    that was active when the config became unreadable is still active (by
+    window ID, per the last-good schedule), and never longer than **24 h**
+    (`maxFallback`, covering 24/7 schedules). Then everything is released for
+    the rest of the daemon's lifetime; a restart re-arms from `last-good.json`
+    (deliberately fail-closed after reboot). No single bug can lock the user
+    out for more than 24 h without a restart.
   - Recovery path, documented in the README: `sudo launchctl bootout
     system/<label>` stops the daemon; the daemon's shutdown handler clears its
     hosts region.
@@ -216,7 +218,9 @@ deferred.
   uses the raw wall clock. The daemon keeps a sticky **anchor**
   `(wallClock, mach_continuous_time)` and always projects "now" from it along
   the monotonic clock, which counts through sleep and cannot be set. The anchor
-  moves only on the first sample, after a reboot (monotonic went backwards), or
+  moves only on the first sample, in a new boot session (each sample carries
+  a `kern.bootsessionuuid` tag; monotonic values from other boots are never
+  compared), or
   after the wall clock has disagreed with the projection **continuously for
   24 h** (so a genuine correction eventually wins). A disagreement beyond
   2 minutes in **either** direction is tamper: a forward jump cannot end a
@@ -259,9 +263,10 @@ deferred.
   inject a fake "browser" that returns scripted tab lists and records
   redirects.
 - **Manual acceptance:** install for real, define a 2-minute block window,
-  confirm a target site is blocked in Safari with DoH off (hosts layer) and in
-  Chrome with DoH on (tab watcher), a target app is killed on launch, and all
-  are released after the window.
+  confirm a target site is blocked (hosts layer; with the DoH resolvers
+  sinkholed, Chrome's automatic secure DNS and Firefox's default fall back to
+  it), a target app is killed on launch, and all are released after the
+  window. Done 2026-10-27 via `scripts/verify-launchd.sh` + `verify-teardown.sh`.
 
 ## 8. Design Principles (isolation & testability)
 

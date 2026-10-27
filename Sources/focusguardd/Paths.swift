@@ -7,5 +7,4 @@ enum Paths {
     static let lastGood = stateDir + "/last-good.json"
     static let clockState = stateDir + "/clock-state.json"
     static let hosts = "/etc/hosts"
-    static let launchdLabel = "com.focusguard.daemon"
 }

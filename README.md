@@ -24,7 +24,8 @@ admin users (see `examples/config.json`). The daemon re-reads it on every tick; 
     log stream --predicate 'subsystem == "com.focusguard"' --level info
 
 Acceptance scripts: `scripts/verify-once.sh` (single pass, no launchd) and
-`scripts/verify-launchd.sh` (installed daemon, ~4 minutes).
+`scripts/verify-launchd.sh` (installed daemon, ~5 minutes) and `scripts/verify-teardown.sh`
+(SIGTERM cleanup only, ~1 minute).
 
 ## How enforcement works
 
@@ -33,7 +34,7 @@ Acceptance scripts: `scripts/verify-once.sh` (single pass, no launchd) and
   DNS-over-HTTPS resolvers are sinkholed too, so Chrome (automatic secure DNS) and Firefox
   (default) fall back to the system resolver. Written atomically with `fsync`; only the
   marked region is ever touched.
-- **Apps:** by bundle ID. SIGTERM, then SIGKILL 3 s later. Helper processes are never
+- **Apps:** by bundle ID. SIGTERM, then SIGKILL 3–5 s later. Helper processes are never
   targeted by their parent's ID.
 - **Clock changes don't help.** Schedule time is projected from a persisted anchor along
   `mach_continuous_time`; a wall-clock jump in either direction is ignored for 24 h.

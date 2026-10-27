@@ -3,7 +3,7 @@
 # Writes a 2-minute window that starts one minute from now, watches the daemon enter and leave
 # it, then checks KeepAlive (kill -9 → relaunch) and SIGTERM teardown (bootout → region cleared).
 # Takes ~4 minutes. One sudo prompt up front.
-set -uo pipefail
+set -uo pipefail   # no -e: check() collects failures and the script reports them all
 cd "$(dirname "$0")/.."
 
 LABEL=com.focusguard.daemon

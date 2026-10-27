@@ -18,8 +18,8 @@ public struct LocalMoment: Equatable {
 }
 
 extension ScheduleWindow {
-    /// Start is inclusive, end is exclusive. A window whose end is at or before its start
-    /// crosses midnight and belongs to its start day.
+    /// Start is inclusive, end is exclusive. A window whose end is before its start crosses
+    /// midnight and belongs to its start day; equal start and end is an empty window.
     public func isActive(at m: LocalMoment) -> Bool {
         guard enabled else { return false }
         let s = start.minutesSinceMidnight

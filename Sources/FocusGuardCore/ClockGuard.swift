@@ -18,7 +18,7 @@ public struct ClockSample: Codable, Equatable {
 ///
 /// Trusted time is always projected from an *anchor* sample along the monotonic clock
 /// (`mach_continuous_time`: counts through sleep, cannot be set). The anchor moves only on the
-/// first sample, after a reboot (monotonic went backwards), or after the wall clock has disagreed
+/// first sample, in a new boot session (the sample's `boot` tag changed), or after the wall clock has disagreed
 /// with the projection continuously for `reconvergeAfter` — long enough that a genuine correction
 /// eventually wins, far too long for a clock change to shorten or delay a window. Because the
 /// anchor is sticky, drift is measured cumulatively and small steps cannot creep past `tolerance`.

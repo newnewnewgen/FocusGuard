@@ -50,7 +50,7 @@ enum ConfigFile {
     }
 
     /// Clock-guard anchor, root-only. Only meaningful within one boot; ClockGuard discards it
-    /// itself when the monotonic clock has gone backwards.
+    /// itself when the boot-session tag no longer matches.
     static func loadClockState() -> ClockGuard.State? {
         guard let data = FileManager.default.contents(atPath: Paths.clockState) else { return nil }
         return try? JSONDecoder().decode(ClockGuard.State.self, from: data)

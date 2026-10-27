@@ -17,11 +17,11 @@ public enum HostsRegion {
     /// followed by the DoH endpoints.
     public static func render(domains: Set<String>) -> String {
         var lines: [String] = []
-        for d in domains.sorted() + (domains.isEmpty ? [] : dohEndpoints) {
-            lines.append("0.0.0.0 \(d)")
-            lines.append("0.0.0.0 www.\(d)")
-            lines.append(":: \(d)")
-            lines.append(":: www.\(d)")
+        for d in domains.sorted() {
+            lines += ["0.0.0.0 \(d)", "0.0.0.0 www.\(d)", ":: \(d)", ":: www.\(d)"]
+        }
+        if !domains.isEmpty {
+            for d in dohEndpoints { lines += ["0.0.0.0 \(d)", ":: \(d)"] }
         }
         return lines.joined(separator: "\n")
     }

@@ -1,9 +1,7 @@
 .DS_Store
 build/
-*.xcuserstate
-DerivedData/
-.swiftpm/xcode/
 .build/
+*.xcuserstate
 *.xcodeproj
 .swiftpm/
 DerivedData/
