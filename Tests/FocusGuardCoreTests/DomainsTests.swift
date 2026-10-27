@@ -1,0 +1,34 @@
+import XCTest
+@testable import FocusGuardCore
+
+final class DomainsTests: XCTestCase {
+    func testLowercasesAndTrims() {
+        XCTAssertEqual(DomainNormalizer.normalize("  Reddit.COM "), "reddit.com")
+    }
+
+    func testStripsSchemePathAndPort() {
+        XCTAssertEqual(DomainNormalizer.normalize("https://reddit.com/r/foo?x=1"), "reddit.com")
+        XCTAssertEqual(DomainNormalizer.normalize("http://reddit.com:8080"), "reddit.com")
+    }
+
+    func testStripsLeadingWwwAndTrailingDot() {
+        XCTAssertEqual(DomainNormalizer.normalize("www.reddit.com"), "reddit.com")
+        XCTAssertEqual(DomainNormalizer.normalize("reddit.com."), "reddit.com")
+    }
+
+    func testKeepsOtherSubdomains() {
+        XCTAssertEqual(DomainNormalizer.normalize("old.reddit.com"), "old.reddit.com")
+    }
+
+    func testEmptyStaysEmpty() {
+        XCTAssertEqual(DomainNormalizer.normalize("   "), "")
+        XCTAssertEqual(DomainNormalizer.normalize("https://"), "")
+    }
+
+    func testHostMatchesDomainOrSubdomain() {
+        XCTAssertTrue(DomainNormalizer.host("old.reddit.com", isUnder: "reddit.com"))
+        XCTAssertTrue(DomainNormalizer.host("reddit.com", isUnder: "reddit.com"))
+        XCTAssertFalse(DomainNormalizer.host("notreddit.com", isUnder: "reddit.com"))
+        XCTAssertFalse(DomainNormalizer.host("reddit.com.evil.io", isUnder: "reddit.com"))
+    }
+}
