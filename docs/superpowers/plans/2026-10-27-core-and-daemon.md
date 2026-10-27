@@ -1530,6 +1530,101 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 8c: Boot-session tag on ClockSample; strip idempotency (review fixes)
+
+Review of Task 8b found: (1) the persisted clock anchor only checks `now.monotonic >= anchor.monotonic`, but monotonic time restarts at every boot and the anchor is taken seconds after boot, so a stale anchor from the previous boot is accepted roughly half the time and every window runs shifted by the previous uptime for 24 h — a retryable bypass. Fix: tag samples with a boot-session identifier. (2) `strip`'s trailing-blank-line collapse fires whenever a region is present, so `apply` is not idempotent on files with trailing blank lines, and a stray end marker outside a region is dropped. Fix: remove the collapse; only honour an end marker while inside a region. (3) Doc comment on `ConfigResolver` overstated the bound: it is per daemon lifetime (a restart with a still-broken config re-arms the fallback, which is deliberate fail-closed-after-reboot).
+
+**Files:**
+- Modify: `Sources/FocusGuardCore/ClockGuard.swift`, `Tests/FocusGuardCoreTests/ClockGuardTests.swift`
+- Modify: `Sources/FocusGuardCore/HostsRegion.swift`, `Tests/FocusGuardCoreTests/HostsRegionTests.swift`
+- Modify: `Sources/FocusGuardCore/ConfigResolver.swift` (comment only)
+
+- [ ] **Step 1: Tests first**
+
+Add to `ClockGuardTests`:
+```swift
+    func testDifferentBootSessionResetsAnchorEvenIfMonotonicIsLarger() {
+        let st = guardian.step(state: nil, now: ClockSample(wall: t0, monotonic: 25, boot: "boot-A")).state
+        let s = guardian.step(state: st, now: ClockSample(wall: t0.addingTimeInterval(5500), monotonic: 40, boot: "boot-B"))
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(5500), "a new boot has nothing to project from")
+        XCTAssertFalse(s.tampered)
+        XCTAssertEqual(s.state.anchor.boot, "boot-B")
+    }
+```
+Add to `HostsRegionTests`:
+```swift
+    func testApplyIsIdempotentWithTrailingBlankLines() {
+        let once = HostsRegion.apply(domains: ["x.com"], to: "a\n\n\n")
+        XCTAssertEqual(HostsRegion.apply(domains: ["x.com"], to: once), once)
+        XCTAssertEqual(HostsRegion.apply(domains: [], to: once), "a\n\n\n")
+    }
+
+    func testStrayEndMarkerOutsideRegionIsPreserved() {
+        let contents = "a\n# FOCUSGUARD END\nb\n" + HostsRegion.startMarker + "\n0.0.0.0 x.com\n" + HostsRegion.endMarker + "\n"
+        XCTAssertEqual(HostsRegion.strip(contents), "a\n# FOCUSGUARD END\nb\n")
+    }
+```
+Run: `swift test 2>&1 | grep -E "error|failed|Executed"` → compile error (`boot:` label) is the expected failure.
+
+- [ ] **Step 2: ClockSample gets a boot tag**
+
+In `ClockGuard.swift` replace `ClockSample` with:
+```swift
+/// A paired reading of the wall clock and a monotonic clock that keeps counting through sleep.
+/// `boot` identifies the boot session: monotonic values from different boots are incomparable.
+public struct ClockSample: Codable, Equatable {
+    public var wall: Date
+    public var monotonic: TimeInterval
+    public var boot: String
+
+    public init(wall: Date, monotonic: TimeInterval, boot: String = "") {
+        self.wall = wall
+        self.monotonic = monotonic
+        self.boot = boot
+    }
+}
+```
+and change the guard at the top of `step` to:
+```swift
+        guard let state, now.boot == state.anchor.boot, now.monotonic >= state.anchor.monotonic else {
+            // First sample, or a different boot session: nothing to project from.
+            return Step(trusted: now.wall, state: State(anchor: now), tampered: false)
+        }
+```
+
+- [ ] **Step 3: strip fixes**
+
+In `HostsRegion.swift`, inside `strip`:
+- change `if trimmed == endMarker { inRegion = false; continue }` to `if trimmed == endMarker, inRegion { inRegion = false; continue }`
+- replace the last three lines (`var result = …`, the `while` loop, `return result`) with `return kept.joined(separator: "\n")`.
+
+- [ ] **Step 4: ConfigResolver comment**
+
+Replace the doc comment block above `public struct ConfigResolver` with:
+```swift
+/// Decides which config to enforce when the live one is unreadable.
+///
+/// Bounded fail-closed: keep enforcing the last-known-good config, but only while one of the
+/// windows that was active *when the live config vanished* is still active, and never longer
+/// than `maxFallback`. After that the fallback is released for the rest of this daemon's
+/// lifetime, until a live config is read again. A daemon restart re-arms it from the persisted
+/// last-good config — deliberately fail-closed after a reboot — so the bound is per lifetime,
+/// not cumulative. A bug can never lock the user out for more than `maxFallback` without a
+/// restart, and the README documents `launchctl bootout` as the escape hatch.
+```
+
+- [ ] **Step 5: Run and commit**
+
+Run: `swift test 2>&1 | grep -E "failed|error:|Executed"` → `Executed 61 tests, with 0 failures`.
+```bash
+git add Sources/FocusGuardCore Tests/FocusGuardCoreTests
+git commit -m "Core: tag clock samples with boot session; make hosts strip idempotent
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 9: Ports (protocols) and test fakes
 
 **Files:**
@@ -2002,8 +2097,26 @@ enum SystemClock {
         return nanos / 1_000_000_000
     }
 
+    /// Monotonic values are only comparable within one boot; samples carry the boot session so a
+    /// persisted anchor from a previous boot is never projected from.
+    private static let bootSessionID: String = {
+        if let uuid = sysctlString("kern.bootsessionuuid"), !uuid.isEmpty { return uuid }
+        var tv = timeval()
+        var size = MemoryLayout<timeval>.size
+        if sysctlbyname("kern.boottime", &tv, &size, nil, 0) == 0 { return "boottime-\(tv.tv_sec)" }
+        return "unknown-\(UUID().uuidString)"  // never matches a persisted anchor: fail safe
+    }()
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buf = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buf, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buf)
+    }
+
     static func sample() -> ClockSample {
-        ClockSample(wall: Date(), monotonic: monotonicSeconds())
+        ClockSample(wall: Date(), monotonic: monotonicSeconds(), boot: bootSessionID)
     }
 }
 ```
