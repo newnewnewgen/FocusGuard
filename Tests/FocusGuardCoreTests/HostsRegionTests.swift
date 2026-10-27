@@ -86,4 +86,15 @@ final class HostsRegionTests: XCTestCase {
         XCTAssertEqual(HostsRegion.strip("a\n\n\n"), "a\n\n\n")
         XCTAssertEqual(HostsRegion.apply(domains: [], to: "a\n\n\n"), "a\n\n\n")
     }
+
+    func testApplyIsIdempotentWithTrailingBlankLines() {
+        let once = HostsRegion.apply(domains: ["x.com"], to: "a\n\n\n")
+        XCTAssertEqual(HostsRegion.apply(domains: ["x.com"], to: once), once)
+        XCTAssertEqual(HostsRegion.apply(domains: [], to: once), "a\n\n\n")
+    }
+
+    func testStrayEndMarkerOutsideRegionIsPreserved() {
+        let contents = "a\n# FOCUSGUARD END\nb\n" + HostsRegion.startMarker + "\n0.0.0.0 x.com\n" + HostsRegion.endMarker + "\n"
+        XCTAssertEqual(HostsRegion.strip(contents), "a\n# FOCUSGUARD END\nb\n")
+    }
 }

@@ -106,4 +106,12 @@ final class ClockGuardTests: XCTestCase {
         let data = try JSONEncoder().encode(st)
         XCTAssertEqual(try JSONDecoder().decode(ClockGuard.State.self, from: data), st)
     }
+
+    func testDifferentBootSessionResetsAnchorEvenIfMonotonicIsLarger() {
+        let st = guardian.step(state: nil, now: ClockSample(wall: t0, monotonic: 25, boot: "boot-A")).state
+        let s = guardian.step(state: st, now: ClockSample(wall: t0.addingTimeInterval(5500), monotonic: 40, boot: "boot-B"))
+        XCTAssertEqual(s.trusted, t0.addingTimeInterval(5500), "a new boot has nothing to project from")
+        XCTAssertFalse(s.tampered)
+        XCTAssertEqual(s.state.anchor.boot, "boot-B")
+    }
 }

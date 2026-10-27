@@ -4,9 +4,11 @@ import Foundation
 ///
 /// Bounded fail-closed: keep enforcing the last-known-good config, but only while one of the
 /// windows that was active *when the live config vanished* is still active, and never longer
-/// than `maxFallback`. After that the fallback is released and stays released until a live
-/// config is read again. A bug can therefore never lock the user out indefinitely, even with
-/// back-to-back or 24/7 schedules.
+/// than `maxFallback`. After that the fallback is released for the rest of this daemon's
+/// lifetime, until a live config is read again. A daemon restart re-arms it from the persisted
+/// last-good config — deliberately fail-closed after a reboot — so the bound is per lifetime,
+/// not cumulative. A bug can never lock the user out for more than `maxFallback` without a
+/// restart, and the README documents `launchctl bootout` as the escape hatch.
 public struct ConfigResolver {
     public enum Source: Equatable { case live, lastGood, none }
 

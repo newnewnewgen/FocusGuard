@@ -1,13 +1,16 @@
 import Foundation
 
 /// A paired reading of the wall clock and a monotonic clock that keeps counting through sleep.
+/// `boot` identifies the boot session: monotonic values from different boots are incomparable.
 public struct ClockSample: Codable, Equatable {
     public var wall: Date
     public var monotonic: TimeInterval
+    public var boot: String
 
-    public init(wall: Date, monotonic: TimeInterval) {
+    public init(wall: Date, monotonic: TimeInterval, boot: String = "") {
         self.wall = wall
         self.monotonic = monotonic
+        self.boot = boot
     }
 }
 
@@ -46,8 +49,8 @@ public struct ClockGuard {
     }
 
     public func step(state: State?, now: ClockSample) -> Step {
-        guard let state, now.monotonic >= state.anchor.monotonic else {
-            // First sample, or the machine rebooted: nothing to project from.
+        guard let state, now.boot == state.anchor.boot, now.monotonic >= state.anchor.monotonic else {
+            // First sample, or a different boot session: nothing to project from.
             return Step(trusted: now.wall, state: State(anchor: now), tampered: false)
         }
         let projected = state.anchor.wall.addingTimeInterval(now.monotonic - state.anchor.monotonic)

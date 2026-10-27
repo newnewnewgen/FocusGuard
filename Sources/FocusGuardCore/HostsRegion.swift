@@ -45,13 +45,11 @@ public enum HostsRegion {
         for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed == startMarker { inRegion = true; sawRegion = true; continue }
-            if trimmed == endMarker { inRegion = false; continue }
+            if trimmed == endMarker, inRegion { inRegion = false; continue }
             if !inRegion { kept.append(line) }
         }
         guard sawRegion else { return contents }
         if inRegion, !kept.isEmpty { kept.append("") }  // unterminated region: keep the preceding line's newline
-        var result = kept.joined(separator: "\n")
-        while result.hasSuffix("\n\n") { result.removeLast() }
-        return result
+        return kept.joined(separator: "\n")
     }
 }
