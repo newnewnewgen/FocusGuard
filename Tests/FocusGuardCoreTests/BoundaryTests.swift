@@ -3,7 +3,7 @@ import XCTest
 
 final class BoundaryTests: XCTestCase {
     // A fixed calendar so tests do not depend on the machine's zone.
-    var cal: Calendar = {
+    let cal: Calendar = {
         var c = Calendar(identifier: .gregorian)
         c.timeZone = TimeZone(identifier: "America/Vancouver")!
         return c
@@ -57,6 +57,21 @@ final class BoundaryTests: XCTestCase {
         // Nov 1 2026 is the fall-back Sunday in Vancouver.
         let cfg = Config(blockLists: [list], schedules: [window([.sun], "09:00", "12:00")])
         XCTAssertEqual(cfg.nextBoundary(after: date(1, 0, 30, month: 11), calendar: cal), date(1, 9, 0, month: 11))
+    }
+
+    func testDSTSpringForwardNonexistentEndRoundsForward() {
+        // Mar 8 2026 is the spring-forward Sunday in Vancouver: 02:00 jumps to 03:00, so the
+        // window's 02:30 end does not exist. One might expect Foundation to shift the wall time
+        // forward by the skipped hour (03:30); measured on the Swift 6.2.4 toolchain it instead
+        // collapses any time inside the gap to the transition instant, 03:00 PDT (10:00 UTC).
+        // This pins that behaviour: the boundary still fires at the first valid instant after
+        // the gap, and the timer re-arms from there.
+        let cfg = Config(blockLists: [list], schedules: [window([.sun], "01:00", "02:30")])
+        let fired = cfg.nextBoundary(after: date(8, 1, 10, month: 3), calendar: cal)
+        XCTAssertEqual(fired, date(8, 3, 0, month: 3))
+        let iso = ISO8601DateFormatter()
+        iso.timeZone = TimeZone(identifier: "UTC")!
+        XCTAssertEqual(fired.map(iso.string(from:)), "2026-03-08T10:00:00Z")
     }
 
     func testWindowsStartingAtMoment() {

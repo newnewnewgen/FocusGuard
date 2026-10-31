@@ -2,8 +2,13 @@ import Foundation
 
 extension Config {
     /// The next instant strictly after `date` at which any enabled window starts or ends, or nil
-    /// when no window can ever fire. Searches nine calendar days so a once-a-week window wraps.
-    /// The app arms its single timer on this.
+    /// when no window can ever fire. Searches nine calendar days (`0...8`, today plus eight) so a
+    /// once-a-week window wraps even from just after its own boundary. The app arms its single
+    /// timer on this.
+    ///
+    /// DST: a boundary whose wall time falls inside a skipped hour (spring forward) is placed by
+    /// the calendar at the next valid instant — the transition itself. The timer fires there and
+    /// re-arms from the real clock, so the schedule self-heals on the next fire.
     public func nextBoundary(after date: Date, calendar: Calendar = .current) -> Date? {
         let startOfToday = calendar.startOfDay(for: date)
         for dayOffset in 0...8 {

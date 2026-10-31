@@ -66,5 +66,16 @@ final class ScheduleTests: XCTestCase {
         XCTAssertEqual(m.advanced(byMinutes: 10), LocalMoment(weekday: .tue, minutesSinceMidnight: 0))
         XCTAssertEqual(m.advanced(byMinutes: 10 + 1440), LocalMoment(weekday: .wed, minutesSinceMidnight: 0))
         XCTAssertEqual(m.timeOfDay, TimeOfDay("23:50")!)
+        XCTAssertEqual(m.advanced(byMinutes: 0), m)
+        // Several whole days at once wrap the week correctly.
+        XCTAssertEqual(LocalMoment(weekday: .sat, minutesSinceMidnight: 0).advanced(byMinutes: 3 * 1440 + 1),
+                       LocalMoment(weekday: .tue, minutesSinceMidnight: 1))
+    }
+
+    func testWeekdayPreviousAndNextAreInverses() {
+        for d in Weekday.allCases {
+            XCTAssertEqual(d.next.previous, d)
+            XCTAssertEqual(d.previous.next, d)
+        }
     }
 }

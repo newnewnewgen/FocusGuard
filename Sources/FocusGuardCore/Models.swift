@@ -16,16 +16,15 @@ public enum Weekday: String, Codable, CaseIterable, Hashable {
         }
     }
 
-    public var previous: Weekday {
-        let all = Weekday.allCases
-        let i = all.firstIndex(of: self)!
-        return all[(i + all.count - 1) % all.count]
-    }
+    public var previous: Weekday { shifted(by: -1) }
+    public var next: Weekday { shifted(by: 1) }
 
-    public var next: Weekday {
+    /// `n` days later (negative moves back), wrapping the week.
+    func shifted(by n: Int) -> Weekday {
         let all = Weekday.allCases
         let i = all.firstIndex(of: self)!
-        return all[(i + 1) % all.count]
+        let count = all.count
+        return all[((i + n) % count + count) % count]
     }
 }
 
@@ -129,6 +128,7 @@ public struct ScheduleWindow: Codable, Equatable, Identifiable {
         self.unlockMode = unlockMode
     }
 
+    // A new stored property must be added here, to the struct, and to `init(from:)` below.
     private enum CodingKeys: String, CodingKey {
         case id, name, days, start, end, blockListIDs, enabled, unlockMode
     }
