@@ -288,7 +288,7 @@ deferred.
   and `clock-state.json`. Verified on 2026-10-27.
 - *(resolved)* No file watcher; the daemon re-reads `config.json` every tick.
 - *(resolved 2026-10-30, §10.7)* `SMAppService.daemon` from `/Applications` works ad-hoc signed on
-  macOS 26.3.
+  macOS 15.6 with Xcode 26.3 (the macOS 26 check remains for when this Mac upgrades).
 - *(resolved)* Event-driven app kill lives in the Plan 2 app; the daemon
   enumerates with libproc (works without a window server) on a 2 s sweep.
 - Exact AppleScript per browser family for "all tabs with URLs", and whether
