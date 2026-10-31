@@ -86,24 +86,51 @@ final class AppModel {
 
     /// Apply `edit` to a copy of the config; save it now, after a challenge, or refuse, depending on
     /// the strictest unlock mode the edit cuts through. Views never mutate config directly.
+    ///
+    /// The edit is re-applied to the *current* config when a challenge succeeds: a stricter window
+    /// may have started, or the file may have changed under us, while the sheet was open.
     @discardableResult
-    func apply(_ edit: (inout Config) -> Void) -> Outcome {
+    func apply(_ edit: @escaping (inout Config) -> Void) -> Outcome {
         guard let old = config else { return .failed }
         var new = old
         edit(&new)
         guard new != old else { return .noChange }
-        return gate(new.weakens(from: old, at: LocalMoment(date: Date()))) { [weak self] in self?.commit(new) }
+        // Both closures re-apply the edit to whatever the config is *when they run*. Immediately,
+        // that is `new`; after a challenge it is the edit on top of any change made meanwhile.
+        let fresh: () -> (current: Config, edited: Config)? = { [weak self] in
+            guard let current = self?.config else { return nil }
+            var edited = current
+            edit(&edited)
+            return (current, edited)
+        }
+        return gate(new.weakens(from: old, at: LocalMoment(date: Date())), recheck: {
+            guard let (current, edited) = fresh() else { return .impossible }
+            return edited.weakens(from: current, at: LocalMoment(date: Date()))
+        }) { [weak self] in
+            if let (_, edited) = fresh() { self?.commit(edited) }
+        }
     }
 
     /// Run `action` now (nil / basic), after a typed challenge (friction), or never (impossible).
+    /// `recheck` is consulted when the challenge is passed: the world may have moved while the
+    /// sheet was open, and if it now reports `.impossible` the action is refused instead of run.
+    /// Anything ≤ friction goes ahead — the user just passed a challenge, do not ask for another.
     @discardableResult
-    func gate(_ mode: UnlockMode?, action: @escaping () -> Void) -> Outcome {
+    func gate(_ mode: UnlockMode?, recheck: @escaping () -> UnlockMode? = { nil },
+              action: @escaping () -> Void) -> Outcome {
         switch mode {
         case nil, .basic?:
             action()
             return .applied
         case .friction?:
-            pendingChallenge = PendingChallenge(sentence: Challenge.sentence(), onSuccess: action)
+            pendingChallenge = PendingChallenge(sentence: Challenge.sentence()) { [weak self] in
+                guard let self else { return }
+                if recheck() == .impossible {
+                    self.lockedMessage = self.lockedUntilText
+                    return
+                }
+                action()
+            }
             return .challenge
         case .impossible?:
             lockedMessage = lockedUntilText
@@ -128,13 +155,13 @@ final class AppModel {
     var quitNeedsSettingsWindow: Bool { (lockState.overall ?? .basic) > .basic }
 
     func requestQuit() {
-        gate(lockState.overall) { [installer] in
+        gate(lockState.overall, recheck: { [weak self] in self?.lockState.overall }) { [installer] in
             try? installer.unregisterAgent()   // otherwise KeepAlive relaunches us
             NSApp.terminate(nil)
         }
     }
 
     func requestUninstall() {
-        gate(lockState.overall) { [installer] in installer.uninstall() }
+        gate(lockState.overall, recheck: { [weak self] in self?.lockState.overall }) { [installer] in installer.uninstall() }
     }
 }
