@@ -54,4 +54,17 @@ final class ScheduleTests: XCTestCase {
         let m = LocalMoment(date: date, calendar: cal)
         XCTAssertEqual(m, LocalMoment(weekday: .tue, minutesSinceMidnight: 14 * 60 + 7))
     }
+
+    func testWeekdayNext() {
+        XCTAssertEqual(Weekday.mon.next, .tue)
+        XCTAssertEqual(Weekday.sun.next, .mon)
+    }
+
+    func testLocalMomentAdvancesAcrossMidnight() {
+        let m = LocalMoment(weekday: .mon, minutesSinceMidnight: 23 * 60 + 50)
+        XCTAssertEqual(m.advanced(byMinutes: 5), LocalMoment(weekday: .mon, minutesSinceMidnight: 23 * 60 + 55))
+        XCTAssertEqual(m.advanced(byMinutes: 10), LocalMoment(weekday: .tue, minutesSinceMidnight: 0))
+        XCTAssertEqual(m.advanced(byMinutes: 10 + 1440), LocalMoment(weekday: .wed, minutesSinceMidnight: 0))
+        XCTAssertEqual(m.timeOfDay, TimeOfDay("23:50")!)
+    }
 }

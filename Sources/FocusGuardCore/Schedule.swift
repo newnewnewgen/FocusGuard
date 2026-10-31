@@ -15,6 +15,21 @@ public struct LocalMoment: Equatable {
         self.weekday = Weekday(calendarWeekday: c.weekday!)
         self.minutesSinceMidnight = c.hour! * 60 + c.minute!
     }
+
+    /// Same clock, `n` minutes later (n >= 0), rolling over weekdays.
+    public func advanced(byMinutes n: Int) -> LocalMoment {
+        var total = minutesSinceMidnight + n
+        var day = weekday
+        while total >= 1440 {
+            total -= 1440
+            day = day.next
+        }
+        return LocalMoment(weekday: day, minutesSinceMidnight: total)
+    }
+
+    public var timeOfDay: TimeOfDay {
+        TimeOfDay(hour: minutesSinceMidnight / 60, minute: minutesSinceMidnight % 60)!
+    }
 }
 
 extension ScheduleWindow {
