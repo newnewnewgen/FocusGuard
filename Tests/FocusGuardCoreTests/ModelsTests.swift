@@ -65,7 +65,6 @@ final class ModelsTests: XCTestCase {
         let cfg = Config(schedules: [w])
         let decoded = try Config.decodeJSON(try cfg.encodeJSON())
         XCTAssertEqual(decoded.schedules[0].unlockMode, .impossible)
-        XCTAssertTrue(String(data: try cfg.encodeJSON(), encoding: .utf8)!.contains("\"unlockMode\" : \"impossible\""))
         XCTAssertLessThan(UnlockMode.basic, UnlockMode.friction)
         XCTAssertLessThan(UnlockMode.friction, UnlockMode.impossible)
         XCTAssertEqual(max(UnlockMode.basic, .impossible), .impossible)

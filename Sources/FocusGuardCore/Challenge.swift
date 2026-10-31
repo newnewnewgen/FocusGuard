@@ -4,17 +4,17 @@ import Foundation
 public enum Challenge {
     public static let defaultWordCount = 10
 
-    /// Common, unambiguous, easy-to-type words (3–8 letters, lowercase, no homophones that
-    /// an OCR'd screenshot would make trivially guessable).
+    /// Common, easy-to-type words (3–8 letters, lowercase). Spellings that differ between US and
+    /// Canadian/UK English are left out so the sentence has exactly one correct typing.
     public static let words: [String] = """
     about above across after again against along among animal answer around arrive basket beach \
     before begin behind below beside better between beyond bottle branch bread bridge bright broken \
-    brother butter button camera candle carpet castle cattle center chance change cheese circle \
-    class clock cloud coffee color corner cotton count country cousin cover crowd dance danger \
+    brother butter button camera candle carpet castle cattle chance change cheese circle \
+    class clock cloud coffee corner cotton count country cousin cover crowd dance danger \
     daughter decide desert dinner doctor dollar double dragon dream dress drink early earth eight \
     either empty enemy engine enough evening every expect family famous farmer father field fight \
     figure finger finish flower follow forest forget forward friend front fruit future garden gather \
-    gentle giant glass golden grass green ground guard guess hammer happen harbor heavy hidden \
+    gentle giant glass golden grass green ground guard guess hammer happen heavy hidden \
     history honey horse hotel hundred hunger hurry island jacket journey jungle kitchen ladder \
     language large laugh leader learn leather letter level light listen little lonely machine magic \
     manner marble market master matter meadow member memory metal middle minute mirror modern \
@@ -30,9 +30,10 @@ public enum Challenge {
     voice wagon watch water weather wheel whisper window winter wonder wooden yellow young
     """.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
 
-    /// `wordCount` words drawn with replacement from `words`, joined by single spaces.
+    /// `wordCount` (> 0) words drawn with replacement from `words`, joined by single spaces.
     public static func sentence(wordCount: Int = defaultWordCount, using rng: inout some RandomNumberGenerator) -> String {
-        (0..<max(wordCount, 1)).map { _ in words.randomElement(using: &rng)! }.joined(separator: " ")
+        precondition(wordCount > 0, "a challenge sentence needs at least one word")
+        return (0..<wordCount).map { _ in words.randomElement(using: &rng)! }.joined(separator: " ")
     }
 
     /// Convenience with the system generator.

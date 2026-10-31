@@ -35,6 +35,13 @@ final class ChallengeTests: XCTestCase {
         XCTAssertTrue(Challenge.words.allSatisfy { $0 == $0.lowercased() && $0.count >= 3 && $0.count <= 8 })
     }
 
+    func testWordListAvoidsUSUKDivergentSpellings() {
+        let divergent: Set<String> = ["color", "colour", "center", "centre", "harbor", "harbour", "favor", "favour",
+                                      "flavor", "flavour", "gray", "grey", "honor", "honour", "labor", "labour",
+                                      "neighbor", "neighbour", "meter", "metre", "theater", "theatre"]
+        XCTAssertTrue(divergent.isDisjoint(with: Challenge.words), "\(divergent.intersection(Challenge.words))")
+    }
+
     func testMatchesIsExactExceptSurroundingWhitespace() {
         XCTAssertTrue(Challenge.matches(typed: "river stone clock", sentence: "river stone clock"))
         XCTAssertTrue(Challenge.matches(typed: " river stone clock \n", sentence: "river stone clock"))

@@ -368,15 +368,20 @@ friction, not a wall": an admin with `sudo` can still edit the file).
 ### 10.5 Core additions (pure, test-first)
 
 - `Config.nextBoundary(after: Date, calendar:) -> Date?` — the next instant any
-  enabled window starts or ends, searching up to 8 days ahead. Drives the timer.
+  enabled window starts or ends, searching nine calendar days ahead. Drives the timer.
 - `Config.lockState(at: LocalMoment) -> LockState` — for the current moment:
   the strictest mode protecting each list, each window, and the app as a whole,
   plus `lockedUntil: TimeOfDay?` (when the old config's active set becomes empty,
   within 24 h). The UI reads this to disable controls and label them.
 - `Config.weakens(from old: Config, at: LocalMoment) -> UnlockMode?` — walks
-  minute by minute from now until `old` is idle (max 1440 steps) and returns the
-  strictest mode of any `old` window whose blocked items are missing from the
-  new config at that minute, or `nil` if nothing weakens. This is the save-time
+  minute by minute from now until `old` is idle (max 1440 steps). At each minute
+  every blocked item (normalized domain or bundle ID) has an *effective
+  protection*: the strictest mode among the active windows that cover it. An
+  item is cut when the new config gives it no protection at that minute, or a
+  lower mode than `old` did. Returns the strictest `old` mode among cut items,
+  or `nil` if nothing weakens. Keying on items rather than window IDs means
+  disabling an Impossible window while a Basic one still covers the same items
+  is a cut, and deleting a redundant Basic window is not. This is the save-time
   guard behind every affordance, so a path the UI forgot to lock is still gated.
 - `Challenge` — `sentence(wordCount:using: inout RandomNumberGenerator)` from a
   bundled list of ~250 common words, and `matches(typed:sentence:)` (exact after
