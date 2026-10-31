@@ -42,7 +42,7 @@ struct StatusTab: View {
             if inst.daemonStatus == .enabled || inst.daemonStatus == .requiresApproval {
                 Section {
                     Button("Uninstall protection", role: .destructive) { model.requestUninstall() }
-                    Text("Removes the daemon and login item. Your lists and schedule stay in config.json.")
+                    Text("Removes the daemon and login item. Your lists and schedule stay in config.json; the FocusGuard folder in /Library/Application Support remains (it is root-owned).")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

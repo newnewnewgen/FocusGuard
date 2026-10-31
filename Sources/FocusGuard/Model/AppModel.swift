@@ -27,7 +27,7 @@ final class AppModel {
     var pendingChallenge: PendingChallenge?
     var lockedMessage: String?
 
-    let store = ConfigStore()
+    private let store = ConfigStore()
     let installer = Installer()
     private let clock = ScheduleClock()
     private var killer: AppKiller?
@@ -40,6 +40,10 @@ final class AppModel {
     }
 
     // MARK: Derived state
+
+    /// Views may edit only when a config loaded (a parse error disables the editors).
+    var canEditConfig: Bool { config != nil }
+    var supportDirExists: Bool { store.supportDirExists }
 
     var isBlocking: Bool { lockState.overall != nil }
     var activeWindowNames: [String] {

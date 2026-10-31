@@ -4,10 +4,15 @@ import os
 /// Event-driven app kill in the user session. `didLaunchApplicationNotification` arrives within
 /// tens of milliseconds of launch; `terminate()` is a polite quit, escalated to `forceTerminate()`
 /// from a one-shot 3 s timer. The daemon's 2 s libproc sweep remains the backstop.
+@MainActor
 final class AppKiller {
     private let blocked: () -> Set<String>
     private var observer: NSObjectProtocol?
     private let log = Logger(subsystem: "com.focusguard", category: "kill")
+
+    deinit {
+        if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+    }
 
     init(blocked: @escaping () -> Set<String>) {
         self.blocked = blocked
@@ -15,7 +20,8 @@ final class AppKiller {
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            self?.enforce(app, reason: "launch")
+            // Delivered on `.main` (queue above); the compiler cannot see that.
+            MainActor.assumeIsolated { self?.enforce(app, reason: "launch") }
         }
     }
 

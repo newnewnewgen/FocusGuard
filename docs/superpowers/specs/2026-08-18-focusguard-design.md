@@ -397,7 +397,7 @@ friction, not a wall": an admin with `sudo` can still edit the file).
 | `ScheduleClock` | One `DispatchSourceTimer` armed on a wall deadline at `nextBoundary`; re-armed when it fires, when config changes, on `NSWorkspace.didWakeNotification`, and on `NSSystemClockDidChange`. Publishes the current `ActiveSet` and `LockState`. | Core, ConfigStore |
 | `AppKiller` | Observes `didLaunchApplicationNotification`; if the bundle ID is in the active set, `terminate()`, then `forceTerminate()` from a one-shot 3 s timer if still running. When a boundary enters a window, one sweep of `runningApplications`. | ScheduleClock |
 | `Installer` | `SMAppService.daemon("com.focusguard.daemon.plist")` and `SMAppService.agent("com.focusguard.app.plist")`; status mapping; `openSystemSettingsLoginItems()`; "move to /Applications" (copy bundle, relaunch, quit); detects a legacy `/Library/LaunchDaemons/com.focusguard.daemon.plist` and tells the user to run `scripts/uninstall-daemon.sh` first (same label would collide). | ServiceManagement |
-| `DaemonProbe` | On-demand libproc scan for a running `focusguardd` (Status tab appears, after install actions, boundary ticks). Never periodic. | libproc |
+| `DaemonProbe` | On-demand libproc scan for a running `focusguardd` (Status tab appears, after install actions). Never periodic. | libproc |
 | `UnlockGate` | Resolves a `.needsUnlock(mode)`: basic → proceed; friction → present `ChallengeSheet`, proceed on match; impossible → never called (controls are disabled). Quit and Uninstall go through it too. | Core.Challenge |
 
 ### 10.7 Install model (verified by spike 2026-10-30)
@@ -424,7 +424,7 @@ Status says so.
 
 ### 10.8 Battery
 
-Idle cost of the app: one armed timer, one vnode watch, one workspace observer.
+Idle cost of the app: one armed timer, one vnode watch, a handful of push notification observers (app launch, wake, clock/zone change).
 All push; nothing polls, nothing refreshes on a cadence.
 
 ### 10.9 Errors

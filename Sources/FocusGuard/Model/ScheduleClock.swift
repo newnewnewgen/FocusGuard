@@ -10,6 +10,12 @@ final class ScheduleClock {
     private var timer: DispatchSourceTimer?
     private var observers: [NSObjectProtocol] = []
 
+    deinit {
+        timer?.cancel()
+        for o in observers.prefix(1) { NSWorkspace.shared.notificationCenter.removeObserver(o) }
+        for o in observers.dropFirst() { NotificationCenter.default.removeObserver(o) }
+    }
+
     init() {
         let fire: (Notification) -> Void = { [weak self] _ in self?.onFire?() }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(

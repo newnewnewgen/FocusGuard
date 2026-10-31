@@ -19,7 +19,7 @@ struct MenuView: View {
         }
         Divider()
         SettingsLink { Text("Open Settings…") }.keyboardShortcut(",")
-        Button("Quit FocusGuard") {
+        Button("Quit FocusGuard (and stop at login)") {
             if model.quitNeedsSettingsWindow { openSettings() }
             model.requestQuit()
         }.keyboardShortcut("q")
