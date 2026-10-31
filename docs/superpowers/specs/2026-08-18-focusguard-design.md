@@ -287,9 +287,164 @@ deferred.
   `config.json` `0664`; `state/` is `root:wheel 0700` holding `last-good.json`
   and `clock-state.json`. Verified on 2026-10-27.
 - *(resolved)* No file watcher; the daemon re-reads `config.json` every tick.
-- Confirm `SMAppService.daemon` registration succeeds from `/Applications` on
+- *(resolved 2026-10-30, §10.7)* `SMAppService.daemon` from `/Applications` works ad-hoc signed on
   macOS 26.3.
 - *(resolved)* Event-driven app kill lives in the Plan 2 app; the daemon
   enumerates with libproc (works without a window server) on a 2 s sweep.
 - Exact AppleScript per browser family for "all tabs with URLs", and whether
   `NSAppleScript` or `osascript` subprocess is more robust under TCC.
+
+---
+
+## 10. Plan 2 addendum — `FocusGuard.app` (2026-10-30)
+
+**Status:** Approved for planning. Decided in a brainstorm with the user on
+2026-10-30; §3's table and §5a's "event-driven" paragraph are the contract this
+section fills in. Nothing here changes the daemon's enforcement semantics.
+
+### 10.1 Scope
+
+- SwiftUI menu-bar app (`LSUIElement`, no Dock icon) that edits `config.json`
+  and shows status computed by `FocusGuardCore` from the same file.
+- Installs the daemon with `SMAppService.daemon` from inside the bundle and
+  registers itself as a `KeepAlive` launch agent. `scripts/install-daemon.sh`
+  stays as the documented headless fallback.
+- Event-driven app kill in the user session (`NSWorkspace`
+  `didLaunchApplicationNotification`); the daemon's 2 s sweep is the backstop.
+- One exact wall-clock timer for the next window boundary.
+- **Unlock modes** (new, user request): per window, Basic / Friction / Impossible.
+- Out of scope, unchanged: tab watcher, stats, notifications, sync, polish.
+
+### 10.2 Shape
+
+Menu-bar dropdown shows status only: the active window(s) and until when, how
+many sites and apps are blocked, the next change ("Next: Evening at 19:00"),
+then "Open Settings…" and "Quit". Editing lives in a standard Settings window
+with three tabs:
+
+- **Status** — a guided-setup checklist on first run that becomes the health
+  view once installed: *in /Applications* → *daemon installed* → *start at
+  login*, each row with its one button ("Move to Applications", "Install
+  protection", "Open Login Items settings"). Afterwards: daemon running (pid),
+  current window, counts, and "Uninstall protection".
+- **Block Lists** — sidebar of lists; detail shows Sites (domain rows + add
+  field) and Apps (icon + name rows + "Add app"). "Add app" opens a sheet
+  listing running apps first (with icons), then `/Applications` and
+  `~/Applications`, scanned **when the sheet opens**, searchable, plus an
+  "Other bundle ID" field.
+- **Schedule** — one row per window: name, seven day toggles, start/end time
+  pickers, list checkboxes, unlock mode picker, enabled switch, delete.
+
+No countdowns and no per-minute refresh: the menu says "until 12:00".
+
+### 10.3 Data model change
+
+`ScheduleWindow` gains `unlockMode: UnlockMode` (`basic | friction |
+impossible`), encoded as a string. Decoding a config without the key yields
+`.friction`, so existing files stay valid and the daemon, which ignores the
+field, is unaffected. `Config.currentVersion` stays 1.
+
+### 10.4 Unlock modes
+
+A **weakening action** is anything that would unblock something before the
+schedule does: removing a site or app from a list attached to an active window,
+deleting such a list, disabling or deleting an active window, moving its start
+later or its end earlier, removing days or lists from it, lowering its unlock
+mode, quitting the app, or uninstalling protection. Adding is never weakening.
+
+Every weakening action is gated by the **strictest mode among the active
+windows it touches** (impossible > friction > basic):
+
+| Mode | Behaviour |
+|------|-----------|
+| Basic | Applies immediately. |
+| Friction | A challenge sheet shows a randomly generated sentence of common words that must be typed exactly. The sentence is drawn captcha-style (per-glyph rotation and baseline jitter, strike lines, speckle noise, not selectable) and the input field rejects any change that adds more than one character, so paste and drag-in do not work. |
+| Impossible | The control is disabled and labelled "Locked until HH:mm", where the time is when the last active window protecting it ends. |
+
+Mode changes outside active time are free. The daemon enforces the file
+regardless; this gate is the app's own friction, consistent with §1 ("strong
+friction, not a wall": an admin with `sudo` can still edit the file).
+
+### 10.5 Core additions (pure, test-first)
+
+- `Config.nextBoundary(after: Date, calendar:) -> Date?` — the next instant any
+  enabled window starts or ends, searching up to 8 days ahead. Drives the timer.
+- `Config.lockState(at: LocalMoment) -> LockState` — for the current moment:
+  the strictest mode protecting each list, each window, and the app as a whole,
+  plus `lockedUntil: TimeOfDay?` (when the old config's active set becomes empty,
+  within 24 h). The UI reads this to disable controls and label them.
+- `Config.weakens(from old: Config, at: LocalMoment) -> UnlockMode?` — walks
+  minute by minute from now until `old` is idle (max 1440 steps) and returns the
+  strictest mode of any `old` window whose blocked items are missing from the
+  new config at that minute, or `nil` if nothing weakens. This is the save-time
+  guard behind every affordance, so a path the UI forgot to lock is still gated.
+- `Challenge` — `sentence(wordCount:using: inout RandomNumberGenerator)` from a
+  bundled list of ~250 common words, and `matches(typed:sentence:)` (exact after
+  trimming trailing whitespace). Seedable for tests.
+- `Config.statusSummary(at:)` — active window names, blocked counts, next
+  change, for the menu and Status tab.
+
+### 10.6 App components
+
+| Unit | Responsibility | Depends on |
+|------|----------------|------------|
+| `ConfigStore` | Load `config.json`; publish `Config`; `apply(edit)` runs the edit on a copy, asks `weakens`, and either saves (temp file + rename in the same directory) or returns `.needsUnlock(mode)`; a vnode `DispatchSource` on the file picks up external edits. | Core |
+| `ScheduleClock` | One `DispatchSourceTimer` armed on a wall deadline at `nextBoundary`; re-armed when it fires, when config changes, on `NSWorkspace.didWakeNotification`, and on `NSSystemClockDidChange`. Publishes the current `ActiveSet` and `LockState`. | Core, ConfigStore |
+| `AppKiller` | Observes `didLaunchApplicationNotification`; if the bundle ID is in the active set, `terminate()`, then `forceTerminate()` from a one-shot 3 s timer if still running. When a boundary enters a window, one sweep of `runningApplications`. | ScheduleClock |
+| `Installer` | `SMAppService.daemon("com.focusguard.daemon.plist")` and `SMAppService.agent("com.focusguard.app.plist")`; status mapping; `openSystemSettingsLoginItems()`; "move to /Applications" (copy bundle, relaunch, quit); detects a legacy `/Library/LaunchDaemons/com.focusguard.daemon.plist` and tells the user to run `scripts/uninstall-daemon.sh` first (same label would collide). | ServiceManagement |
+| `DaemonProbe` | On-demand libproc scan for a running `focusguardd` (Status tab appears, after install actions, boundary ticks). Never periodic. | libproc |
+| `UnlockGate` | Resolves a `.needsUnlock(mode)`: basic → proceed; friction → present `ChallengeSheet`, proceed on match; impossible → never called (controls are disabled). Quit and Uninstall go through it too. | Core.Challenge |
+
+### 10.7 Install model (verified by spike 2026-10-30)
+
+Bundle layout: `Contents/MacOS/FocusGuard`, `Contents/MacOS/focusguardd`,
+`Contents/Library/LaunchDaemons/com.focusguard.daemon.plist`,
+`Contents/Library/LaunchAgents/com.focusguard.app.plist`. The daemon plist uses
+`BundleProgram` (`Contents/MacOS/focusguardd`) with `ProgramArguments`
+`[focusguardd, run]`, `RunAtLoad`, `KeepAlive`, `AssociatedBundleIdentifiers`;
+the `StandardOutPath`/`StandardErrorPath` keys are dropped (the daemon logs to
+`os.Logger`; launchd cannot create `/Library/Logs/FocusGuard`). The agent plist
+mirrors it for the app with `KeepAlive` true so a quit app relaunches; "Quit"
+in the menu therefore unregisters the agent first (gated by unlock mode) so it
+stays quit.
+
+An ad-hoc-signed bundle in `/Applications` on macOS 15.6 registers with
+`register()` throwing "Operation not permitted" while status becomes
+`requiresApproval`; after the user enables it under Login Items → Allow in the
+Background, the daemon runs as uid 0 with the plist's argv. Build is
+`scripts/build-app.sh`: `swift build -c release`, assemble, `codesign -s -`.
+No Xcode project (`*.xcodeproj` is gitignored). The daemon creates the support
+directory on first start; before that the app cannot write `config.json` and
+Status says so.
+
+### 10.8 Battery
+
+Idle cost of the app: one armed timer, one vnode watch, one workspace observer.
+All push; nothing polls, nothing refreshes on a cadence.
+
+### 10.9 Errors
+
+- Config unreadable: Status shows the decode error; editing is disabled until
+  the file parses (the daemon is in bounded fail-closed meanwhile, §6).
+- Config dir missing or not writable: Status explains and points at Install.
+- `requiresApproval`: button to the Login Items pane; Status re-probes when the
+  window regains focus.
+- Not in `/Applications`: Install disabled until moved.
+- Legacy manual daemon present: Install disabled with the uninstall instruction.
+- App clock vs daemon clock: the app uses the raw wall clock for status and
+  locks; the daemon uses the tamper-guarded clock. Under tamper they may
+  disagree; enforcement (daemon) wins, status is informational.
+
+### 10.10 Testing
+
+Core: XCTest, test-first — `nextBoundary` (same day, next day, week wrap,
+midnight-crossing, disabled windows, empty config, DST day), `lockState` and
+`weakens` (remove item, shorten end, extend end is fine, remove day, disable,
+delete list, lower mode, strictest-wins across two windows), `Challenge`
+(deterministic with seed, exact match, trailing whitespace). App: manual
+acceptance on this Mac — build, move, install, approve, daemon running from the
+bundle, edit a list and see the daemon's hosts region follow within a tick,
+launch Chess during a window and measure kill latency from the launch
+notification (~100 ms target), friction challenge blocks paste, impossible
+locks controls, boundary timer flips status on the minute. Resolves the
+`SMAppService` question in §9.
