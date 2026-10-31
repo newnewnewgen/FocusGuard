@@ -12,7 +12,12 @@ struct MenuView: View {
             Text("Not blocking")
         }
         if let next = model.nextBoundary {
-            Text("Next: \(nextLabel) at \(next, format: .dateTime.weekday(.abbreviated).hour().minute())")
+            let when = Text(next, format: .dateTime.weekday(.abbreviated).hour().minute())
+            if model.nextWindowNames.isEmpty {
+                Text("Blocking ends \(when)")
+            } else {
+                Text("Next: \(model.nextWindowNames.joined(separator: ", ")) at \(when)")
+            }
         }
         if model.loadError != nil {
             Text("⚠︎ config.json is unreadable")
@@ -35,9 +40,5 @@ struct MenuView: View {
         let names = model.activeWindowNames.joined(separator: ", ")
         let until = model.lockState.lockedUntil.map { " · until \($0.string)" } ?? ""
         return "● \(names.isEmpty ? "Blocking" : names)\(until)"
-    }
-
-    private var nextLabel: String {
-        model.nextWindowNames.isEmpty ? "release" : model.nextWindowNames.joined(separator: ", ")
     }
 }

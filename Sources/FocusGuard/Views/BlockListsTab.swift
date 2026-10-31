@@ -46,7 +46,7 @@ struct BlockListsTab: View {
 
     private func removeSelected() {
         guard let id = selection else { return }
-        model.apply { $0.removeList(id: id) }
+        if model.apply({ $0.removeList(id: id) }) == .applied { selection = lists.first?.id }
     }
 }
 
@@ -57,6 +57,7 @@ struct BlockListDetail: View {
     @State private var name = ""
     @State private var newDomain = ""
     @State private var showAddApp = false
+    @FocusState private var nameFocused: Bool
     /// Bumped on every refused edit; `.id(refused)` rebuilds the form from the saved config.
     @State private var refused = 0
 
@@ -68,15 +69,17 @@ struct BlockListDetail: View {
             Section {
                 HStack {
                     TextField("List name", text: $name)
+                        .focused($nameFocused)
                         .onSubmit(commitName)
-                        .onChange(of: list.id) { _, _ in name = list.name }
-                    if removalsLocked { LockBadge(until: model.lockState.lockedUntil) }
-                    else if mode == .friction { Label("Active", systemImage: "shield.fill").font(.caption).foregroundStyle(.secondary) }
+                        .onChange(of: nameFocused) { _, focused in if !focused { commitName() } }
+                        .onChange(of: list.id) { _, _ in name = list.name; newDomain = "" }
+                        .onChange(of: list.name) { _, n in name = n }
+                    ProtectionBadge(mode: mode, until: model.lockState.lockedUntil)
                 }
             }
 
             Section("Sites") {
-                ForEach(list.domains, id: \.self) { domain in
+                ForEach(unique(list.domains), id: \.self) { domain in
                     HStack {
                         Text(domain)
                         Spacer()
@@ -90,7 +93,7 @@ struct BlockListDetail: View {
             }
 
             Section("Apps") {
-                ForEach(list.appBundleIDs, id: \.self) { id in
+                ForEach(unique(list.appBundleIDs), id: \.self) { id in
                     let entry = InstalledApps.entry(forBundleID: id)
                     HStack {
                         Image(nsImage: entry.icon).resizable().frame(width: 20, height: 20)
@@ -133,9 +136,17 @@ struct BlockListDetail: View {
             .help(removalsLocked ? model.lockedUntilText : "Remove")
     }
 
+    /// Display order preserved, duplicates dropped: `ForEach(id: \.self)` needs unique IDs even
+    /// if a hand-edited config.json repeats an entry.
+    private func unique(_ items: [String]) -> [String] {
+        var seen = Set<String>()
+        return items.filter { seen.insert($0).inserted }
+    }
+
     private func commitName() {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { name = list.name; return }
+        guard trimmed != list.name else { return }
         commit { $0.update(list: list.id) { $0.name = trimmed } }
     }
 

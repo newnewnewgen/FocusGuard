@@ -19,6 +19,6 @@ struct SettingsView: View {
         } message: {
             Text(model.lockedMessage ?? "")
         }
-        .onAppear { NSApp.activate(ignoringOtherApps: true) }
+        .onAppear { NSApp.activate() }
     }
 }

@@ -19,7 +19,10 @@ struct StatusTab: View {
                 daemonRow(inst)
                 row(done: inst.agentStatus == .enabled, "Starts at login and stays running",
                     detail: inst.agentStatus == .enabled ? nil : "Status: \(inst.agentStatus.label)") {
-                    if inst.agentStatus == .requiresApproval { Button("Open Login Items settings") { inst.openLoginItems() } }
+                    // The daemon row already offers this button while the daemon itself needs approval.
+                    if inst.agentStatus == .requiresApproval, inst.daemonStatus != .requiresApproval {
+                        Button("Open Login Items settings") { inst.openLoginItems() }
+                    }
                 }
                 if let err = inst.lastError { Text(err).foregroundStyle(.red).font(.callout) }
             }
@@ -60,10 +63,14 @@ struct StatusTab: View {
     private func daemonRow(_ inst: Installer) -> some View {
         switch inst.daemonStatus {
         case .enabled where inst.daemonRunningFromBundle:
-            row(done: true, "Background daemon running", detail: "pid \(inst.daemonProcess!.pid)")
+            if let proc = inst.daemonProcess {
+                row(done: true, "Background daemon running", detail: "pid \(proc.pid)")
+            } else {
+                row(done: true, "Background daemon running")
+            }
         case .enabled:
             row(done: false, "Daemon enabled but not running",
-                detail: inst.daemonProcess.map { "A focusguardd is running from \($0.path)" } ?? "launchd should start it within a few seconds; click to re-register if it does not.") {
+                detail: inst.daemonProcess.map { "A focusguardd is running from \($0.path)" } ?? "launchd should start it within a few seconds; Re-install re-registers it if it does not.") {
                 Button("Re-install") { inst.install() }
             }
         case .requiresApproval:
@@ -75,8 +82,15 @@ struct StatusTab: View {
             row(done: false, "Background daemon not installed",
                 detail: "Registers focusguardd (root) and FocusGuard as a login item.") {
                 Button("Install protection") { inst.install() }.disabled(!inst.canInstall)
+                    .help(installHelp(inst))
             }
         }
+    }
+
+    private func installHelp(_ inst: Installer) -> String {
+        if inst.legacyInstallPresent { return "Remove the manual daemon install first (scripts/uninstall-daemon.sh)" }
+        if !inst.inApplications { return "Move FocusGuard to /Applications first" }
+        return "Registers the daemon and login item"
     }
 
     private func row(done: Bool, _ title: String, detail: String? = nil) -> some View {

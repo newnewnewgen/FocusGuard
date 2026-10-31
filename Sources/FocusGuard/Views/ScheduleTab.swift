@@ -52,11 +52,10 @@ struct WindowRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 TextField("Window name", text: $name).textFieldStyle(.roundedBorder).frame(width: 180)
-                    .onSubmit { commit { $0.update(window: window.id) { $0.name = name } } }
+                    .onSubmit(commitName)
                 Toggle("Enabled", isOn: binding(\.enabled)).toggleStyle(.switch).labelsHidden()
                     .disabled(hardLocked)
-                if hardLocked { LockBadge(until: model.lockState.lockedUntil) }
-                else if mode != nil { Label("Active", systemImage: "shield.fill").font(.caption).foregroundStyle(.secondary) }
+                ProtectionBadge(mode: mode, until: model.lockState.lockedUntil)
                 Spacer()
                 Button(role: .destructive) { commit { $0.schedules.removeAll { $0.id == window.id } } } label: {
                     Image(systemName: "trash")
@@ -65,10 +64,13 @@ struct WindowRow: View {
             HStack(spacing: 12) {
                 HStack(spacing: 2) {
                     ForEach(Weekday.allCases, id: \.self) { day in
-                        Toggle(day.rawValue.prefix(1).uppercased(), isOn: dayBinding(day))
+                        Toggle(day.rawValue.prefix(2).capitalized, isOn: dayBinding(day))
                             .toggleStyle(.button).controlSize(.small)
+                            .help(day.rawValue.capitalized)
+                            // Removing a day weakens the window; adding one never does.
+                            .disabled(hardLocked && window.days.contains(day))
                     }
-                }.disabled(hardLocked)
+                }
                 DatePicker("from", selection: timeBinding(\.start), displayedComponents: .hourAndMinute)
                     .disabled(hardLocked)
                 DatePicker("to", selection: timeBinding(\.end), displayedComponents: .hourAndMinute)
@@ -98,6 +100,13 @@ struct WindowRow: View {
         case .applied, .noChange: break
         case .challenge, .locked, .failed: refused += 1
         }
+    }
+
+    private func commitName() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { name = window.name; return }
+        guard trimmed != window.name else { return }
+        commit { $0.update(window: window.id) { $0.name = trimmed } }
     }
 
     private func binding<T>(_ key: WritableKeyPath<ScheduleWindow, T>) -> Binding<T> {
