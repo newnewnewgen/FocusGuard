@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MenuView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         if model.isBlocking {
@@ -23,12 +23,12 @@ struct MenuView: View {
             Text("⚠︎ config.json is unreadable")
         }
         Divider()
-        SettingsLink { Text("Open Settings…") }.keyboardShortcut(",")
+        Button("Open Settings…") { openWindow(id: FocusGuardApp.settingsWindowID) }.keyboardShortcut(",")
         Button("Quit FocusGuard (and stop at login)") {
             if model.quitNeedsSettingsWindow {
                 // The challenge sheet / locked alert attach to the settings window; let it exist
                 // before the gate presents them.
-                openSettings()
+                openWindow(id: FocusGuardApp.settingsWindowID)
                 DispatchQueue.main.async { model.requestQuit() }
             } else {
                 model.requestQuit()

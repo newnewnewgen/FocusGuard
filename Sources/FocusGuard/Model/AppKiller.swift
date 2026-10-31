@@ -35,7 +35,14 @@ final class AppKiller {
               blocked().contains(id) else { return }
         let ms = app.launchDate.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
         log.info("terminate \(id, privacy: .public) pid=\(app.processIdentifier) reason=\(reason, privacy: .public) sinceLaunch=\(ms)ms")
-        if !app.terminate() { _ = app.forceTerminate() }
+        // An app that is still launching ignores the polite quit (observed: Chess took the full
+        // 3 s escalation), and it has nothing to save yet, so a fresh launch is killed outright.
+        // A long-running app caught by a sweep gets the polite quit first.
+        if reason == "launch" || !app.isFinishedLaunching {
+            if !app.forceTerminate() { _ = app.terminate() }
+        } else if !app.terminate() {
+            _ = app.forceTerminate()
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [log] in
             if !app.isTerminated {
                 log.info("forceTerminate \(id, privacy: .public) pid=\(app.processIdentifier)")
