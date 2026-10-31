@@ -57,6 +57,8 @@ struct BlockListDetail: View {
     @State private var name = ""
     @State private var newDomain = ""
     @State private var showAddApp = false
+    /// Bumped on every refused edit; `.id(refused)` rebuilds the form from the saved config.
+    @State private var refused = 0
 
     private var mode: UnlockMode? { model.mode(forList: list.id) }
     private var removalsLocked: Bool { mode == .impossible }
@@ -78,7 +80,7 @@ struct BlockListDetail: View {
                     HStack {
                         Text(domain)
                         Spacer()
-                        removeButton { model.apply { $0.update(list: list.id) { $0.domains.removeAll { $0 == domain } } } }
+                        removeButton { commit { $0.update(list: list.id) { $0.domains.removeAll { $0 == domain } } } }
                     }
                 }
                 HStack {
@@ -97,20 +99,30 @@ struct BlockListDetail: View {
                             if entry.name != id { Text(id).font(.caption).foregroundStyle(.secondary) }
                         }
                         Spacer()
-                        removeButton { model.apply { $0.update(list: list.id) { $0.appBundleIDs.removeAll { $0 == id } } } }
+                        removeButton { commit { $0.update(list: list.id) { $0.appBundleIDs.removeAll { $0 == id } } } }
                     }
                 }
                 Button("Add app…") { showAddApp = true }
             }
         }
         .formStyle(.grouped)
+        .id(refused)
         .onAppear { name = list.name }
         .sheet(isPresented: $showAddApp) {
             AddAppSheet(alreadyAdded: Set(list.appBundleIDs)) { ids in
-                model.apply { $0.update(list: list.id) { l in
+                commit { $0.update(list: list.id) { l in
                     for id in ids where !l.appBundleIDs.contains(id) { l.appBundleIDs.append(id) }
                 } }
             }
+        }
+    }
+
+    /// Every mutation goes through here. A refused edit bumps `refused` so the form is rebuilt
+    /// from the saved config and the refusal visibly snaps back.
+    private func commit(_ edit: @escaping (inout Config) -> Void) {
+        switch model.apply(edit) {
+        case .applied, .noChange: break
+        case .challenge, .locked, .failed: refused += 1
         }
     }
 
@@ -124,13 +136,13 @@ struct BlockListDetail: View {
     private func commitName() {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { name = list.name; return }
-        model.apply { $0.update(list: list.id) { $0.name = trimmed } }
+        commit { $0.update(list: list.id) { $0.name = trimmed } }
     }
 
     private func addDomain() {
         let d = DomainNormalizer.normalize(newDomain)
         guard !d.isEmpty else { return }
-        model.apply { $0.update(list: list.id) { if !$0.domains.contains(d) { $0.domains.append(d) } } }
+        commit { $0.update(list: list.id) { if !$0.domains.contains(d) { $0.domains.append(d) } } }
         newDomain = ""
     }
 }

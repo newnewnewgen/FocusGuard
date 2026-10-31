@@ -20,8 +20,14 @@ struct MenuView: View {
         Divider()
         SettingsLink { Text("Open Settings…") }.keyboardShortcut(",")
         Button("Quit FocusGuard (and stop at login)") {
-            if model.quitNeedsSettingsWindow { openSettings() }
-            model.requestQuit()
+            if model.quitNeedsSettingsWindow {
+                // The challenge sheet / locked alert attach to the settings window; let it exist
+                // before the gate presents them.
+                openSettings()
+                DispatchQueue.main.async { model.requestQuit() }
+            } else {
+                model.requestQuit()
+            }
         }.keyboardShortcut("q")
     }
 

@@ -40,6 +40,9 @@ struct WindowRow: View {
     @Environment(AppModel.self) private var model
     let window: ScheduleWindow
     @State private var name = ""
+    /// Bumped on every refused edit; `.id(refused)` rebuilds the AppKit-backed controls (switch,
+    /// segmented picker, date pickers) from the saved config so the refusal visibly snaps back.
+    @State private var refused = 0
 
     private var mode: UnlockMode? { model.mode(forWindow: window.id) }
     /// Impossible and active: only name, adding lists, and extending the end are allowed.
@@ -49,13 +52,13 @@ struct WindowRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 TextField("Window name", text: $name).textFieldStyle(.roundedBorder).frame(width: 180)
-                    .onSubmit { model.apply { $0.update(window: window.id) { $0.name = name } } }
+                    .onSubmit { commit { $0.update(window: window.id) { $0.name = name } } }
                 Toggle("Enabled", isOn: binding(\.enabled)).toggleStyle(.switch).labelsHidden()
                     .disabled(hardLocked)
                 if hardLocked { LockBadge(until: model.lockState.lockedUntil) }
                 else if mode != nil { Label("Active", systemImage: "shield.fill").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
-                Button(role: .destructive) { model.apply { $0.schedules.removeAll { $0.id == window.id } } } label: {
+                Button(role: .destructive) { commit { $0.schedules.removeAll { $0.id == window.id } } } label: {
                     Image(systemName: "trash")
                 }.buttonStyle(.borderless).disabled(hardLocked)
             }
@@ -82,25 +85,34 @@ struct WindowRow: View {
                 if (model.config?.blockLists ?? []).isEmpty { Text("none yet — create one in Block Lists").font(.caption).foregroundStyle(.secondary) }
             }
         }
+        .id(refused)
         .onAppear { name = window.name }
         .onChange(of: window.name) { _, new in name = new }
     }
 
-    // All bindings write through the gate; the view re-renders from the saved config, so a refused
-    // edit simply snaps back.
+    /// Every mutation goes through here. A refused edit (challenge pending, locked, or failed)
+    /// bumps `refused` so the row is rebuilt from the saved config instead of showing the
+    /// control's optimistic new value.
+    private func commit(_ edit: @escaping (inout Config) -> Void) {
+        switch model.apply(edit) {
+        case .applied, .noChange: break
+        case .challenge, .locked, .failed: refused += 1
+        }
+    }
+
     private func binding<T>(_ key: WritableKeyPath<ScheduleWindow, T>) -> Binding<T> {
         Binding(get: { window[keyPath: key] },
-                set: { v in model.apply { $0.update(window: window.id) { $0[keyPath: key] = v } } })
+                set: { v in commit { $0.update(window: window.id) { $0[keyPath: key] = v } } })
     }
 
     private func dayBinding(_ day: Weekday) -> Binding<Bool> {
         Binding(get: { window.days.contains(day) },
-                set: { on in model.apply { $0.update(window: window.id) { if on { $0.days.insert(day) } else { $0.days.remove(day) } } } })
+                set: { on in commit { $0.update(window: window.id) { if on { $0.days.insert(day) } else { $0.days.remove(day) } } } })
     }
 
     private func listBinding(_ id: UUID) -> Binding<Bool> {
         Binding(get: { window.blockListIDs.contains(id) },
-                set: { on in model.apply { $0.update(window: window.id) {
+                set: { on in commit { $0.update(window: window.id) {
                     if on { if !$0.blockListIDs.contains(id) { $0.blockListIDs.append(id) } } else { $0.blockListIDs.removeAll { $0 == id } }
                 } } })
     }
@@ -112,7 +124,7 @@ struct WindowRow: View {
         }, set: { d in
             let c = Calendar.current.dateComponents([.hour, .minute], from: d)
             guard let t = TimeOfDay(hour: c.hour ?? 0, minute: c.minute ?? 0) else { return }
-            model.apply { $0.update(window: window.id) { $0[keyPath: key] = t } }
+            commit { $0.update(window: window.id) { $0[keyPath: key] = t } }
         })
     }
 }
