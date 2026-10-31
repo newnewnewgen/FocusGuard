@@ -7,10 +7,12 @@ let package = Package(
     products: [
         .library(name: "FocusGuardCore", targets: ["FocusGuardCore"]),
         .executable(name: "focusguardd", targets: ["focusguardd"]),
+        .executable(name: "FocusGuard", targets: ["FocusGuard"]),
     ],
     targets: [
         .target(name: "FocusGuardCore"),
         .executableTarget(name: "focusguardd", dependencies: ["FocusGuardCore"]),
+        .executableTarget(name: "FocusGuard", dependencies: ["FocusGuardCore"], exclude: ["Info.plist"]),
         .testTarget(name: "FocusGuardCoreTests", dependencies: ["FocusGuardCore"]),
     ]
 )
