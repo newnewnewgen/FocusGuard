@@ -7,16 +7,37 @@ struct AddAppSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var running: [AppEntry] = []
     @State private var installed: [AppEntry] = []
+    @State private var scanning = true
     @State private var query = ""
     @State private var picked = Set<String>()
     @State private var manualID = ""
 
+    private var manualTrimmed: String { manualID.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// A bundle ID has at least one dot and no whitespace; anything else is a typo, not an app.
+    private var manualValid: Bool {
+        manualTrimmed.contains(".") && manualTrimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+    }
+    private var shownRunning: [AppEntry] { matching(running) }
+    private var shownInstalled: [AppEntry] {
+        matching(installed.filter { app in !running.contains { $0.bundleID == app.bundleID } })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             TextField("Search apps", text: $query).textFieldStyle(.roundedBorder).padding()
-            List(selection: $picked) {
-                section("Running", running)
-                section("Installed", installed.filter { app in !running.contains { $0.bundleID == app.bundleID } })
+            if !scanning, !query.isEmpty, shownRunning.isEmpty, shownInstalled.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else {
+                List(selection: $picked) {
+                    section("Running", shownRunning)
+                    section("Installed", shownInstalled)
+                    if scanning {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Scanning…").foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
             Divider()
             HStack {
@@ -25,27 +46,32 @@ struct AddAppSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Add") {
                     var ids = Array(picked)
-                    let manual = manualID.trimmingCharacters(in: .whitespaces)
-                    if !manual.isEmpty { ids.append(manual) }
+                    if manualValid { ids.append(manualTrimmed) }
                     onAdd(ids)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(picked.isEmpty && manualID.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(picked.isEmpty && !manualValid)
             }
             .padding()
         }
         .frame(width: 480, height: 520)
-        .onAppear {
-            // One scan, when the sheet opens. Never in the background.
-            running = InstalledApps.running()
-            installed = InstalledApps.installed()
+        .onAppear { running = InstalledApps.running() }
+        .task {
+            // One scan per sheet, off the main thread: bundle plists for a few hundred apps.
+            let found = await Task.detached(priority: .userInitiated) { InstalledApps.installed() }.value
+            InstalledApps.remember(found)
+            installed = found
+            scanning = false
         }
     }
 
+    private func matching(_ apps: [AppEntry]) -> [AppEntry] {
+        apps.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.bundleID.localizedCaseInsensitiveContains(query) }
+    }
+
     @ViewBuilder
-    private func section(_ title: String, _ apps: [AppEntry]) -> some View {
-        let shown = apps.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.bundleID.localizedCaseInsensitiveContains(query) }
+    private func section(_ title: String, _ shown: [AppEntry]) -> some View {
         if !shown.isEmpty {
             Section(title) {
                 ForEach(shown) { app in
