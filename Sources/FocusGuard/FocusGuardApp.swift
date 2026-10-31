@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct FocusGuardApp: App {
+    @NSApplicationDelegateAdaptor(ReopenHandler.self) private var reopen
     @State private var model = AppModel()
     /// Decided once at launch: a fresh install opens the settings window by itself (a menu-bar-only
     /// app whose icon sits behind the notch would otherwise give a first-time user nothing to
@@ -27,6 +28,9 @@ struct FocusGuardApp: App {
             SettingsView().environment(model)
         }
         .windowResizability(.contentSize)
+        // `open focusguard://settings` (and a reopen of the app) brings this window up even when
+        // the menu-bar icon is hidden behind the notch.
+        .handlesExternalEvents(matching: [Self.settingsURLHost])
         if #available(macOS 15, *) {
             return window
                 .defaultLaunchBehavior(installedAtLaunch ? .suppressed : .presented)
@@ -37,4 +41,15 @@ struct FocusGuardApp: App {
     }
 
     static let settingsWindowID = "settings"
+    static let settingsURLHost = "settings"
+    static let settingsURL = URL(string: "focusguard://settings")!
+}
+
+/// Clicking the app in Finder or the Dock while it is already running opens the settings
+/// window; without this an LSUIElement app silently does nothing on reopen.
+final class ReopenHandler: NSObject, NSApplicationDelegate {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { NSWorkspace.shared.open(FocusGuardApp.settingsURL) }
+        return false
+    }
 }
