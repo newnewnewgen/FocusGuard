@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 /// Is a `focusguardd` running, and from where? One libproc pass, only when asked (Status tab
-/// shown, after an install action, on a boundary). Never on a timer.
+/// shown, after an install action). Never on a timer or a boundary.
 enum DaemonProbe {
     struct Result: Equatable {
         let pid: pid_t
