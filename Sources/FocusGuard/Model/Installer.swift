@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import FocusGuardCore
 import Observation
 import ServiceManagement
@@ -63,10 +64,19 @@ final class Installer {
     func openLoginItems() { SMAppService.openSystemSettingsLoginItems() }
 
     /// Copy this bundle to /Applications, launch the copy, quit. /Applications is admin-writable.
+    /// Refused while anything is running from the destination bundle: replacing it under a live
+    /// daemon or a second app instance would pull the files out from under them.
     func moveToApplications() {
         lastError = nil
         let fm = FileManager.default
         let dest = Self.applicationsURL
+        let daemonFromDest = DaemonProbe.find()?.path.hasPrefix(dest.path) == true
+        let appFromDest = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier!)
+            .contains { $0.bundleURL?.standardizedFileURL == dest.standardizedFileURL }
+        if daemonFromDest || appFromDest {
+            lastError = "FocusGuard is already running from /Applications. Quit this copy and use that one."
+            return
+        }
         do {
             if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
             try fm.copyItem(at: Bundle.main.bundleURL, to: dest)
@@ -74,10 +84,18 @@ final class Installer {
             lastError = "Could not copy to /Applications: \(error.localizedDescription)"
             return
         }
+        // The copy inherits any quarantine flag from a downloaded bundle; drop it (best effort).
+        _ = removexattr(dest.path, "com.apple.quarantine", XATTR_NOFOLLOW)
         let cfg = NSWorkspace.OpenConfiguration()
         cfg.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: dest, configuration: cfg) { _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+        NSWorkspace.shared.openApplication(at: dest, configuration: cfg) { _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    self.lastError = "Copied to /Applications but could not launch it: \(error.localizedDescription)"
+                } else {
+                    NSApp.terminate(nil)
+                }
+            }
         }
     }
 }
