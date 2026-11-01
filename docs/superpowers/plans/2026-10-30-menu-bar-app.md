@@ -2371,6 +2371,19 @@ git commit -m "Plan 2: live acceptance results" -m "Co-Authored-By: Claude Fable
 
 ---
 
+**Results (2026-10-31, macOS 15.6.1, Xcode 26.3, 14" MacBook Pro):**
+- Step 1 pass — `scripts/uninstall-daemon.sh` removed the manual install; hosts region count 0.
+- Step 2 pass — Move to Applications relaunched from `/Applications/FocusGuard.app`; Install protection → requiresApproval → enabled after the Login Items switch; `launchctl print system/com.focusguard.daemon` shows `program identifier = Contents/MacOS/focusguardd`, `state = running`; support dir `root:admin drwxrwxr-x`, `config.json` `newgen:admin 0664`.
+  Found and fixed on the way: the menu-bar icon was off-screen behind the notch (CGWindowList reported the status item `onscreen: false`), so a first-time user had nothing to click. The `Settings` scene cannot be opened from launch code (`showSettingsWindow:` had no responder); replaced with a `Window` scene presented on launch until the daemon is enabled, plus a `focusguard://settings` URL and a reopen handler (commits b61bdbb, 9336f79).
+- Step 3 pass — hosts region followed edits within one daemon tick; `curl example.com` failed while blocked and succeeded after release.
+- Step 4 pass — Chess killed on launch: first run `terminate` at 208 ms but the polite quit was ignored while Chess was still launching (died at the 3 s `forceTerminate`); changed the launch path to `forceTerminate` outright → 296 ms from process start, no escalation, daemon never had to act. The ~100 ms target is not reachable because `didLaunchApplicationNotification` itself arrives only once the app has finished launching; 200–300 ms is the floor for this mechanism.
+- Step 5 pass — window end at 15:41: daemon released at 15:41:00.097, app refresh at 15:41:00.183 (50 ms offset + leeway). An external `config.json` edit was picked up by the vnode watch within 2 s. Log shows one refresh per event, nothing periodic.
+- Step 6 pass (user-verified) — Friction: sheet shown, ⌘V inserts nothing, typed sentence unlocks and applies. Impossible: days/start/enabled/delete/mode greyed with "Locked until 16:02", earlier end refused with the Locked alert, later end accepted.
+- Step 7 pass — `kill` of the app → relaunched by the agent within 12 s (2 s uptime when checked). Status tab shows the login-item row enabled. Note: `launchctl print gui/<uid>/com.focusguard.app` reports "Could not find service" for SMAppService-registered agents; use the app's Status tab or `sfltool dumpbtm` (root) instead.
+- Gotcha for anyone reading logs on this Mac: a zsh function named `log` shadows the system tool; use `/usr/bin/log show --info --predicate 'subsystem == "com.focusguard"'`.
+
+---
+
 ### Task 16: Docs and merge
 
 **Files:**
