@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "FocusGuard",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("15.0")],
     products: [
         .library(name: "FocusGuardCore", targets: ["FocusGuardCore"]),
         .executable(name: "focusguardd", targets: ["focusguardd"]),

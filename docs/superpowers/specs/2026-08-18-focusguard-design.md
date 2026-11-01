@@ -298,7 +298,7 @@ deferred.
 
 ## 10. Plan 2 addendum — `FocusGuard.app` (2026-10-30)
 
-**Status:** Approved for planning. Decided in a brainstorm with the user on
+**Status:** Implemented 2026-10-31 (plan: `docs/superpowers/plans/2026-10-30-menu-bar-app.md`). Decided in a brainstorm with the user on
 2026-10-30; §3's table and §5a's "event-driven" paragraph are the contract this
 section fills in. Nothing here changes the daemon's enforcement semantics.
 
@@ -319,8 +319,9 @@ section fills in. Nothing here changes the daemon's enforcement semantics.
 
 Menu-bar dropdown shows status only: the active window(s) and until when, how
 many sites and apps are blocked, the next change ("Next: Evening at 19:00"),
-then "Open Settings…" and "Quit". Editing lives in a standard Settings window
-with three tabs:
+then "Open Settings…" and "Quit". Editing lives in a settings window (a SwiftUI
+`Window` scene, not the `Settings` scene: it must be presentable at launch and by URL, see
+§10.7) with three tabs:
 
 - **Status** — a guided-setup checklist on first run that becomes the health
   view once installed: *in /Applications* → *daemon installed* → *start at
@@ -395,7 +396,7 @@ friction, not a wall": an admin with `sudo` can still edit the file).
 |------|----------------|------------|
 | `ConfigStore` | Load `config.json`; publish `Config`; `apply(edit)` runs the edit on a copy, asks `weakens`, and either saves (temp file + rename in the same directory) or returns `.needsUnlock(mode)`; a vnode `DispatchSource` on the file picks up external edits. | Core |
 | `ScheduleClock` | One `DispatchSourceTimer` armed on a wall deadline at `nextBoundary`; re-armed when it fires, when config changes, on `NSWorkspace.didWakeNotification`, and on `NSSystemClockDidChange`. Publishes the current `ActiveSet` and `LockState`. | Core, ConfigStore |
-| `AppKiller` | Observes `didLaunchApplicationNotification`; if the bundle ID is in the active set, `terminate()`, then `forceTerminate()` from a one-shot 3 s timer if still running. When a boundary enters a window, one sweep of `runningApplications`. | ScheduleClock |
+| `AppKiller` | Observes `didLaunchApplicationNotification`; a freshly launched blocked app is `forceTerminate()`d outright (it ignores the polite quit while launching and has nothing to save; measured ~300 ms after process start). Apps caught by a sweep (every refresh with a non-empty active set) get `terminate()`, then `forceTerminate()` from a one-shot 3 s timer. | ScheduleClock |
 | `Installer` | `SMAppService.daemon("com.focusguard.daemon.plist")` and `SMAppService.agent("com.focusguard.app.plist")`; status mapping; `openSystemSettingsLoginItems()`; "move to /Applications" (copy bundle, relaunch, quit); detects a legacy `/Library/LaunchDaemons/com.focusguard.daemon.plist` and tells the user to run `scripts/uninstall-daemon.sh` first (same label would collide). | ServiceManagement |
 | `DaemonProbe` | On-demand libproc scan for a running `focusguardd` (Status tab appears, after install actions). Never periodic. | libproc |
 | `UnlockGate` | Resolves a `.needsUnlock(mode)`: basic → proceed; friction → present `ChallengeSheet`, proceed on match; impossible → never called (controls are disabled). Quit and Uninstall go through it too. | Core.Challenge |
@@ -412,6 +413,12 @@ the `StandardOutPath`/`StandardErrorPath` keys are dropped (the daemon logs to
 mirrors it for the app with `KeepAlive` true so a quit app relaunches; "Quit"
 in the menu therefore unregisters the agent first (gated by unlock mode) so it
 stays quit.
+
+**First run (added after live testing):** on a 14" MacBook the menu-bar icon sat behind the
+notch, so a first-time user had nothing to click. The settings window therefore opens by
+itself on launch until the daemon is enabled (`defaultLaunchBehavior`, a macOS 15 API, which
+sets the deployment target), answers `open focusguard://settings` via `handlesExternalEvents`,
+and a reopen of the app (Finder/Launchpad click) routes to that URL.
 
 An ad-hoc-signed bundle in `/Applications` on macOS 15.6 registers with
 `register()` throwing "Operation not permitted" while status becomes

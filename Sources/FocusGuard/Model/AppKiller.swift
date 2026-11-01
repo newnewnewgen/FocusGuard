@@ -25,7 +25,8 @@ final class AppKiller {
         }
     }
 
-    /// Called when a window becomes active so already-running blocked apps die at once.
+    /// Runs on every refresh with a non-empty active set (boundary, config change, wake) so
+    /// already-running blocked apps die at once.
     func sweep() {
         for app in NSWorkspace.shared.runningApplications { enforce(app, reason: "sweep") }
     }
@@ -37,7 +38,9 @@ final class AppKiller {
         log.info("terminate \(id, privacy: .public) pid=\(app.processIdentifier) reason=\(reason, privacy: .public) sinceLaunch=\(ms)ms")
         // An app that is still launching ignores the polite quit (observed: Chess took the full
         // 3 s escalation), and it has nothing to save yet, so a fresh launch is killed outright.
-        // A long-running app caught by a sweep gets the polite quit first.
+        // A long-running app caught by a sweep gets the polite quit first. Force-killing a fresh
+        // launch can leave a stale lock file behind (Chrome SingletonLock), the same risk the
+        // daemon's SIGKILL already carries.
         if reason == "launch" || !app.isFinishedLaunching {
             if !app.forceTerminate() { _ = app.terminate() }
         } else if !app.terminate() {

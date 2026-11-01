@@ -24,20 +24,19 @@ struct FocusGuardApp: App {
     /// A plain `Window` rather than the `Settings` scene: it can be opened with `openWindow` and
     /// presented at launch, neither of which the Settings scene allows.
     private var settingsWindow: some Scene {
-        let window = Window("FocusGuard", id: Self.settingsWindowID) {
+        Window("FocusGuard", id: Self.settingsWindowID) {
             SettingsView().environment(model)
         }
         .windowResizability(.contentSize)
         // `open focusguard://settings` (and a reopen of the app) brings this window up even when
-        // the menu-bar icon is hidden behind the notch.
+        // the menu-bar icon is hidden behind the notch. LaunchServices routes the URL by bundle
+        // ID, so with a second copy on disk (build/FocusGuard.app during development) it may go
+        // to the other copy.
         .handlesExternalEvents(matching: [Self.settingsURLHost])
-        if #available(macOS 15, *) {
-            return window
-                .defaultLaunchBehavior(installedAtLaunch ? .suppressed : .presented)
-                .restorationBehavior(.disabled)
-        } else {
-            return window
-        }
+        // macOS 15 API (hence the deployment target): without it the window would open on
+        // every login-item and KeepAlive launch.
+        .defaultLaunchBehavior(installedAtLaunch ? .suppressed : .presented)
+        .restorationBehavior(.disabled)
     }
 
     static let settingsWindowID = "settings"
