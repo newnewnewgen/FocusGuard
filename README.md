@@ -89,9 +89,11 @@ file is ever modified. `scripts/uninstall-daemon.sh` does both and removes the b
 
 ## Known gaps (v1)
 
-A browser that already has the site open keeps working until it re-resolves: browsers cache
-DNS and reuse open connections. Quit and relaunch the browser (Chrome: `chrome://net-internals/#dns`
-→ Clear host cache) and the block applies.
+A browser that was already running when a window began may keep loading a site for a while:
+Chrome resolves DNS itself, with its own cache and its own snapshot of `/etc/hosts`, and reuses
+open connections. Quitting and relaunching the browser applies the block at once (verified
+2026-11-01); `chrome://net-internals/#dns` → Clear host cache also works. Sites first visited
+after the window began are blocked immediately.
 
 VPNs and iCloud Private Relay bypass the hosts layer (only a Network Extension content filter
 covers them, which needs a paid developer account). A hand-configured custom DoH provider
