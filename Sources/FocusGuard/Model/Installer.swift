@@ -29,6 +29,7 @@ final class Installer {
         daemonStatus = daemon.status
         agentStatus = agent.status
         daemonProcess = DaemonProbe.find()
+        AppModel.log.info("install status: daemon=\(self.daemonStatus.label, privacy: .public) agent=\(self.agentStatus.label, privacy: .public) process=\(self.daemonProcess?.path ?? "none", privacy: .public)")
     }
 
     /// Register both. The first daemon registration throws "Operation not permitted" while the

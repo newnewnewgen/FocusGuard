@@ -88,7 +88,12 @@ struct BlockListDetail: View {
                 }
                 HStack {
                     TextField("Add a site, e.g. reddit.com", text: $newDomain).onSubmit(addDomain)
-                    Button("Add", action: addDomain).disabled(DomainNormalizer.normalize(newDomain).isEmpty)
+                    // Adding is never gated by an unlock mode; only an empty field disables the button.
+                    Button("Add", action: addDomain)
+                        .disabled(newDomain.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let hint = domainHint {
+                    Text(hint).font(.caption).foregroundStyle(.red)
                 }
             }
 
@@ -150,9 +155,17 @@ struct BlockListDetail: View {
         commit { $0.update(list: list.id) { $0.name = trimmed } }
     }
 
+    @State private var domainHint: String?
+
     private func addDomain() {
-        let d = DomainNormalizer.normalize(newDomain)
-        guard !d.isEmpty else { return }
+        let typed = newDomain.trimmingCharacters(in: .whitespaces)
+        guard !typed.isEmpty else { return }
+        let d = DomainNormalizer.normalize(typed)
+        guard !d.isEmpty else {
+            domainHint = "\u{201C}\(typed)\u{201D} is not a web address. Use the site\u{2019}s domain, like youtube.com (subdomains are blocked with it)."
+            return
+        }
+        domainHint = nil
         commit { $0.update(list: list.id) { if !$0.domains.contains(d) { $0.domains.append(d) } } }
         newDomain = ""
     }
