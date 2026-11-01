@@ -16,10 +16,15 @@ public enum Weekday: String, Codable, CaseIterable, Hashable {
         }
     }
 
-    public var previous: Weekday {
+    public var previous: Weekday { shifted(by: -1) }
+    public var next: Weekday { shifted(by: 1) }
+
+    /// `n` days later (negative moves back), wrapping the week.
+    func shifted(by n: Int) -> Weekday {
         let all = Weekday.allCases
         let i = all.firstIndex(of: self)!
-        return all[(i + all.count - 1) % all.count]
+        let count = all.count
+        return all[((i + n) % count + count) % count]
     }
 }
 
@@ -77,6 +82,30 @@ public struct BlockList: Codable, Equatable, Identifiable {
     }
 }
 
+/// How much friction the app puts in front of an edit that would unblock something while this
+/// window is active. The daemon ignores it; it is the app's own gate (spec §10.4).
+public enum UnlockMode: String, Codable, Comparable, CaseIterable, Hashable {
+    case basic, friction, impossible
+
+    private var rank: Int {
+        switch self {
+        case .basic: return 0
+        case .friction: return 1
+        case .impossible: return 2
+        }
+    }
+
+    public static func < (a: UnlockMode, b: UnlockMode) -> Bool { a.rank < b.rank }
+
+    public var title: String {
+        switch self {
+        case .basic: return "Basic"
+        case .friction: return "Friction"
+        case .impossible: return "Impossible"
+        }
+    }
+}
+
 public struct ScheduleWindow: Codable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
@@ -85,9 +114,10 @@ public struct ScheduleWindow: Codable, Equatable, Identifiable {
     public var end: TimeOfDay
     public var blockListIDs: [UUID]
     public var enabled: Bool
+    public var unlockMode: UnlockMode
 
     public init(id: UUID = UUID(), name: String, days: Set<Weekday>, start: TimeOfDay, end: TimeOfDay,
-                blockListIDs: [UUID], enabled: Bool = true) {
+                blockListIDs: [UUID], enabled: Bool = true, unlockMode: UnlockMode = .friction) {
         self.id = id
         self.name = name
         self.days = days
@@ -95,6 +125,25 @@ public struct ScheduleWindow: Codable, Equatable, Identifiable {
         self.end = end
         self.blockListIDs = blockListIDs
         self.enabled = enabled
+        self.unlockMode = unlockMode
+    }
+
+    // A new stored property must be added here, to the struct, and to `init(from:)` below.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, days, start, end, blockListIDs, enabled, unlockMode
+    }
+
+    /// Configs written before unlock modes existed decode as `.friction`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        days = try c.decode(Set<Weekday>.self, forKey: .days)
+        start = try c.decode(TimeOfDay.self, forKey: .start)
+        end = try c.decode(TimeOfDay.self, forKey: .end)
+        blockListIDs = try c.decode([UUID].self, forKey: .blockListIDs)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        unlockMode = try c.decodeIfPresent(UnlockMode.self, forKey: .unlockMode) ?? .friction
     }
 }
 

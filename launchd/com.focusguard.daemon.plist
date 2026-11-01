@@ -4,18 +4,20 @@
 <dict>
     <key>Label</key>
     <string>com.focusguard.daemon</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/focusguardd</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/libexec/focusguardd</string>
+        <string>focusguardd</string>
         <string>run</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <key>StandardOutPath</key>
-    <string>/Library/Logs/FocusGuard/daemon.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Library/Logs/FocusGuard/daemon.log</string>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.focusguard.app</string>
+    </array>
 </dict>
 </plist>

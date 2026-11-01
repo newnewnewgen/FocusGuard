@@ -49,4 +49,24 @@ final class ModelsTests: XCTestCase {
         """
         XCTAssertThrowsError(try Config.decodeJSON(Data(json.utf8)))
     }
+
+    func testUnlockModeDefaultsToFrictionWhenAbsent() throws {
+        let json = """
+        {"version":1,"blockLists":[],"schedules":[{"id":"0B1C2D3E-0000-4000-8000-000000000002",
+         "name":"w","days":["mon"],"start":"09:00","end":"10:00","blockListIDs":[],"enabled":true}]}
+        """
+        let cfg = try Config.decodeJSON(Data(json.utf8))
+        XCTAssertEqual(cfg.schedules[0].unlockMode, .friction)
+    }
+
+    func testUnlockModeRoundTripsAndOrders() throws {
+        var w = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("10:00")!, blockListIDs: [])
+        w.unlockMode = .impossible
+        let cfg = Config(schedules: [w])
+        let decoded = try Config.decodeJSON(try cfg.encodeJSON())
+        XCTAssertEqual(decoded.schedules[0].unlockMode, .impossible)
+        XCTAssertLessThan(UnlockMode.basic, UnlockMode.friction)
+        XCTAssertLessThan(UnlockMode.friction, UnlockMode.impossible)
+        XCTAssertEqual(max(UnlockMode.basic, .impossible), .impossible)
+    }
 }

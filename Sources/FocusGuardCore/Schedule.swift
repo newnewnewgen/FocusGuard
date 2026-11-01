@@ -5,7 +5,9 @@ public struct LocalMoment: Equatable {
     public let weekday: Weekday
     public let minutesSinceMidnight: Int
 
+    /// Invariant: `0 <= minutesSinceMidnight < 1440`, so `timeOfDay` always exists.
     public init(weekday: Weekday, minutesSinceMidnight: Int) {
+        precondition((0..<1440).contains(minutesSinceMidnight), "minutesSinceMidnight must be within one day")
         self.weekday = weekday
         self.minutesSinceMidnight = minutesSinceMidnight
     }
@@ -14,6 +16,17 @@ public struct LocalMoment: Equatable {
         let c = calendar.dateComponents([.weekday, .hour, .minute], from: date)
         self.weekday = Weekday(calendarWeekday: c.weekday!)
         self.minutesSinceMidnight = c.hour! * 60 + c.minute!
+    }
+
+    /// Same clock, `n` minutes later (n >= 0), rolling over weekdays.
+    public func advanced(byMinutes n: Int) -> LocalMoment {
+        precondition(n >= 0, "advanced(byMinutes:) only moves forward")
+        let total = minutesSinceMidnight + n
+        return LocalMoment(weekday: weekday.shifted(by: total / 1440), minutesSinceMidnight: total % 1440)
+    }
+
+    public var timeOfDay: TimeOfDay {
+        TimeOfDay(hour: minutesSinceMidnight / 60, minute: minutesSinceMidnight % 60)!
     }
 }
 
