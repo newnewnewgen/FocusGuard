@@ -61,10 +61,18 @@ mode among the windows covering an item wins.
 **What Impossible actually guarantees.** `config.json` is writable without a password, so the
 daemon treats it as a proposal. It keeps its own accepted copy in `/var/db/FocusGuard`
 (root-owned) and refuses any proposal that would unblock something an active Impossible window
-protects, judged by its own clock. Editing or deleting the file by hand, changing the Mac's
-date, quitting or deleting the app: none of these lift an Impossible block. The refused change
-is taken up automatically when the window ends; meanwhile the app shows it as **on hold**. The
-daemon's binary, launchd plist and state are root-owned, so replacing them needs your password.
+protects, judged by its own clock and time zone, looking a full week ahead. None of these lift
+an Impossible block: editing the file by hand, deleting or corrupting it (that counts as a
+proposal to block nothing), changing the Mac's date, time or time zone, quitting or deleting
+the app. A refused change is taken up automatically when the window ends; meanwhile the app
+shows it as **on hold**. The daemon's binary, launchd plist and state are root-owned, so
+replacing them needs your password.
+
+Two consequences worth knowing before you choose it:
+
+- To change or remove an Impossible schedule, do it **while none of its windows is active**.
+- A schedule with **no gap all week** can never be weakened without `sudo`. That is what you
+  asked for; leave a gap if you want a way out.
 
 What still gets around it: `sudo` (see Recovery), and the gaps below. **Friction is a speed
 bump, not a lock**: it exists only in the app, and editing `config.json` in a text editor
@@ -85,9 +93,10 @@ skips it.
 - **Clock:** the daemon projects schedule time from a persisted anchor along
   `mach_continuous_time`; a wall-clock jump in either direction is ignored for 24 h. The app
   reads the daemon's clock, so its locks agree.
-- **Unreadable or missing config** is fail-closed but bounded: the accepted config stays in
-  force until the window that was active at the time ends (at most 24 h, unless that window
-  is Impossible).
+- **Unreadable or missing config** is fail-closed: the accepted config stays in force until
+  the window that was active at the time ends (at most 24 h), and through every Impossible
+  window after that. A config with duplicate ids, or larger than the limits in
+  `Config.Limits` (512 KB, 48 windows, 32 lists, 2000 sites, 300 apps), counts as unreadable.
 
 ## Recovery
 
@@ -111,6 +120,8 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
 - VPNs and iCloud Private Relay bypass the hosts layer (only a Network Extension content
   filter covers them, which needs a paid developer account). So does a hand-configured custom
   DoH provider.
+- Apps are matched by bundle ID. A copy of an app with its bundle ID edited is a different app
+  as far as FocusGuard can tell.
 - An admin user with `sudo` can always dismantle it. With Impossible windows that is the only
   way; it is strong friction, not a wall.
 

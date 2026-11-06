@@ -89,3 +89,69 @@ target (1,574 lines) has no unit tests.
    move enforcement of weakening into the root daemon with a root-owned config.
 5. I5–I7, then unit tests for `ConfigStore`, `AppModel`, `AppKiller`, `Installer`.
 6. README corrections.
+
+---
+
+# Fix pass (same day, branch `qa-fixes`)
+
+Everything below was done after the report above. Findings keep their numbers.
+
+## What changed
+
+| Finding | Outcome |
+|---------|---------|
+| C1 app cannot be found | **Fixed, verified live.** `DockFallback` detects the off-screen status item and shows a Dock icon; Settings opens reliably from the menu, Dock, Spotlight and URL (it used not to come to the front, reported by the user during the pass). |
+| C2 clock defeats the lock | **Fixed.** The daemon judges; the app reads the daemon's clock offset and time zone. |
+| C3 `config.json` hand edits | **Fixed for Impossible** (daemon-enforced, see below). Friction stays app-only, and the README now says so. |
+| I1 stale daemon after update | **Fixed.** The app compares the installed binary with its own and offers Update (one password). |
+| I2 reboot | **Still untested.** The install is now a plain root LaunchDaemon, the best-trodden path there is, but nobody has rebooted. |
+| I3 Quit/Uninstall look-ahead | **Fixed.** Quit just quits (the app is not the enforcer). Uninstall is judged as "block nothing", with the full week of look-ahead. |
+| I4 paste guard | **Fixed.** Single-keystroke rule, with tests. |
+| I5 unreadable config → data loss | **Fixed**, with a test; the app can restore the file from the daemon's copy. |
+| I6 no way to re-enable login item | **Fixed.** A toggle. |
+| I7 `lastWritten` never invalidated | **Fixed**, with a test. |
+| Minor: Finder in the picker, no force-quit warning, README errors | **Fixed.** |
+
+## Found during the fix pass
+
+1. **The daemon ran as root out of a user-writable folder.** Demonstrated by accident: replacing
+   `focusguardd` inside `/Applications/FocusGuard.app` with `ditto`, no password, had launchd
+   running the new file as root 52 s later. Any process running as the user could become root.
+   The install is now root-owned files behind one password prompt (spec §11.2).
+2. **The self-relaunching login agent was not loaded.** `SMAppService` said enabled; launchd had
+   no such job; killing the app did not bring it back. Replaced with a plain login item.
+3. **Re-registering the daemon raced its own unregister** and left no daemon running until the
+   app repaired it. (Moot now; the mechanism is gone.)
+
+## Second independent review: four bypasses of the new daemon lock
+
+Run against the first version of the daemon-enforced lock, before anything was installed.
+
+| | Bypass (no password) | Fix |
+|---|---|---|
+| B1 | The Impossible window twice in the file with one id: a copy with no lists, a disabled copy with them. | Windows judged by position; duplicate ids do not decode. |
+| B2 | Delete `config.json` during window A; a following Impossible window B was never enforced. | A missing or invalid file is a proposal to block nothing, refused by any Impossible window. |
+| B3 | A 1 MB config made each judgement take minutes on the daemon's only thread; apps stopped being killed. | `Config.Limits`; one judgement per proposal per minute. |
+| B4 | A lock longer than 24 h could be cut to 24 h. | Look-ahead is one week, the schedule's period. |
+| TZ | Daemon kept its start-up time zone; app and daemon disagreed after travel; zone change plus reboot shifted the schedule. | Daemon follows the system zone except during an Impossible window, persists it, publishes it. |
+
+Each has a regression test in `LockBypassTests` / `ReconcilerZoneTests`.
+
+## Verified on the machine during the pass
+
+- Dock icon appears when the status item is hidden (`lsappinfo`: ApplicationType Foreground).
+- `open focusguard://settings` leaves the window on screen and FocusGuard frontmost.
+- macOS started a rebuilt ad-hoc daemon without re-approval (register, and a self-restart).
+- 160 tests; 40 consecutive runs without a failure, 15 of them under CPU load.
+
+## Still open
+
+- **Reboot** has not been tried.
+- Sleep/wake across a boundary, Firefox, uninstall: untested on hardware.
+- Check by hand on macOS 15: whether System Settings → Login Items → "Allow in the Background"
+  can switch a root LaunchDaemon off without a password, and whether Safe Mode loads it.
+- `AppModel`, `AppKiller` and the Installer's row mapping have no unit tests.
+- The install and update scripts are read from the app bundle, which the user owns. A program
+  running as the user could alter them and wait for the next password prompt. Signing would
+  close that; without a developer account it is narrowed, not closed.
+
