@@ -38,6 +38,13 @@ final class ConfigStoreTests: XCTestCase {
         XCTAssertEqual(mode.map { $0 & 0o777 }, 0o664, "the daemon (root) and the next save both need this mode")
     }
 
+    func testSavingAConfigTheDaemonWouldRejectIsRefused() throws {
+        var tooMany = sample
+        tooMany.blockLists[0].domains = (0...Config.Limits.maxDomains).map { "d\($0).com" }
+        XCTAssertThrowsError(try store().save(tooMany))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path), "nothing was written")
+    }
+
     func testCorruptFileThrows() throws {
         try "{ not json".write(toFile: path, atomically: true, encoding: .utf8)
         XCTAssertThrowsError(try store().load())

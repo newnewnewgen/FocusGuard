@@ -40,10 +40,14 @@ public struct ConfigResolver {
     private var fallbackWindowIDs: Set<UUID>?
     private var fallbackSince: TimeInterval?
 
-    /// The last judgement, reused while the proposal and the minute are unchanged: a refused
-    /// proposal sits in the file for the rest of the window and would otherwise be re-judged on
-    /// every 2 s tick. A different proposal, a different minute or a new accepted config misses.
-    private var cachedVerdict: (proposal: Config, moment: LocalMoment, verdict: UnlockMode?)?
+    /// Recent judgements for the current minute, reused while the proposal is unchanged: a
+    /// refused proposal sits in the file for the rest of the window and would otherwise be
+    /// re-judged on every 2 s tick. A few entries, so alternating between proposals (or a held
+    /// proposal alongside the missing-file and time-zone checks) does not defeat it. Cleared on a
+    /// new minute or a new accepted config.
+    private var cachedVerdicts: [(proposal: Config, verdict: UnlockMode?)] = []
+    private var cachedMoment: LocalMoment?
+    private static let cacheSize = 4
     /// How many judgements were actually computed (for tests).
     public private(set) var verdictsComputed = 0
 
@@ -55,10 +59,15 @@ public struct ConfigResolver {
     /// Would taking up `proposal` in place of the accepted config break an Impossible window?
     private mutating func breaksImpossible(_ proposal: Config, at moment: LocalMoment) -> Bool {
         guard let accepted = lastGood, proposal != accepted else { return false }
-        if let c = cachedVerdict, c.moment == moment, c.proposal == proposal { return c.verdict == .impossible }
+        if cachedMoment != moment {
+            cachedMoment = moment
+            cachedVerdicts.removeAll()
+        }
+        if let hit = cachedVerdicts.first(where: { $0.proposal == proposal }) { return hit.verdict == .impossible }
         let verdict = proposal.weakens(from: accepted, at: moment)
         verdictsComputed += 1
-        cachedVerdict = (proposal, moment, verdict)
+        if cachedVerdicts.count >= Self.cacheSize { cachedVerdicts.removeFirst() }
+        cachedVerdicts.append((proposal, verdict))
         return verdict == .impossible
     }
 
@@ -78,7 +87,7 @@ public struct ConfigResolver {
             }
             if live != lastGood {
                 lastGood = live
-                cachedVerdict = nil
+                cachedVerdicts.removeAll()
             }
             return (live, .live)
         }

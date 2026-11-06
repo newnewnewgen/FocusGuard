@@ -170,6 +170,10 @@ final class AppModel {
         var new = old
         edit(&new)
         guard new != old else { return .noChange }
+        if new.isPermanentlyLocked, !old.isPermanentlyLocked {
+            lockedMessage = "That would leave no free minute anywhere in the week while an Impossible window exists. An Impossible lock lasts until blocking next stops, so nothing could ever be removed or loosened again without sudo. Leave a gap somewhere, or use Friction."
+            return .locked
+        }
         let fresh: () -> (baseline: Config, edited: Config)? = { [weak self] in
             guard let self, let current = self.config else { return nil }
             var edited = current

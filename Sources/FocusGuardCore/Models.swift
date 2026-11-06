@@ -177,8 +177,8 @@ public struct Config: Codable, Equatable {
         return config
     }
 
-    /// Far above anything a person would set up, and low enough that the daemon judges any
-    /// allowed config in well under a second. Without them a crafted config.json could keep the
+    /// Far above anything a person would set up, and low enough that the daemon judges the worst
+    /// allowed config in about a second (measured; ordinary ones take milliseconds). Without them a crafted config.json could keep the
     /// daemon's only thread busy for minutes, during which it kills no apps.
     public enum Limits {
         public static let maxBytes = 512 * 1024

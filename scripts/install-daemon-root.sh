@@ -20,6 +20,13 @@ loaded() { launchctl print "system/$LABEL" >/dev/null 2>&1; }
 [ "$(id -u)" = 0 ] || fail "must run as root"
 [ -f "$SRC" ] && [ -x "$SRC" ] || fail "no daemon binary at $SRC"
 
+# From here on a failure must not leave the Mac with no daemon: if a plist is in place and
+# nothing is loaded, load it. Set before the bootout, which is the first thing that can do that.
+recover() {
+    if [ -f "$PLIST" ] && ! loaded; then launchctl bootstrap system "$PLIST" 2>/dev/null || true; fi
+}
+trap recover EXIT
+
 # Stop whatever holds the label now: an older copy of this install, the pre-0.4 one registered
 # from inside the app bundle, or the first manual install. bootout is asynchronous, and launchd
 # waits up to 20 s for the old process to exit before killing it, so wait longer than that.
@@ -29,14 +36,8 @@ if loaded; then
         loaded || break
         sleep 0.25
     done
-    loaded && fail "the running daemon did not stop within 30 s; nothing was changed"
+    loaded && fail "the running daemon did not stop within 30 s; it has been left as it was"
 fi
-
-# From here on a failure must not leave the Mac with no daemon: if a plist is in place, load it.
-recover() {
-    if [ -f "$PLIST" ] && ! loaded; then launchctl bootstrap system "$PLIST" 2>/dev/null || true; fi
-}
-trap recover EXIT
 
 rm -f /usr/local/libexec/focusguardd   # first manual install location
 
@@ -47,8 +48,11 @@ chown root:wheel "$STATE" && chmod 755 "$STATE" || fail "cannot set up $STATE"
 # State written by ≤ 0.3 sat inside the user-writable support directory. Carry the accepted
 # config over once, only as a plain file and only if there is none yet, then drop the old copy.
 LEGACY="$SUPPORT/state"
-if [ -d "$LEGACY" ] && [ ! -L "$LEGACY" ]; then
-    if [ ! -e "$STATE/last-good.json" ] && [ -f "$LEGACY/last-good.json" ] && [ ! -L "$LEGACY/last-good.json" ]; then
+# The directory sits where the user can rename things, so trust it only if root owns it (as the
+# old daemon made it): a planted one is ignored.
+if [ -d "$LEGACY" ] && [ ! -L "$LEGACY" ] && [ "$(stat -f %u "$LEGACY")" = 0 ]; then
+    if [ ! -e "$STATE/last-good.json" ] && [ -f "$LEGACY/last-good.json" ] && [ ! -L "$LEGACY/last-good.json" ] \
+        && [ "$(stat -f %u "$LEGACY/last-good.json")" = 0 ]; then
         install -o root -g wheel -m 644 "$LEGACY/last-good.json" "$STATE/last-good.json" || true
     fi
 fi
@@ -85,6 +89,9 @@ loaded || fail "launchd would not load $PLIST"
 
 # The label must now belong to the root-owned plist, not to a leftover registration that points
 # into an app bundle.
-launchctl print "system/$LABEL" | grep -q "path = $PLIST" || fail "the label is loaded from somewhere other than $PLIST"
+case "$(launchctl print "system/$LABEL" 2>/dev/null)" in
+    *"path = $PLIST"*) ;;
+    *) fail "the label is loaded from somewhere other than $PLIST" ;;
+esac
 trap - EXIT
 echo "installed $BIN"

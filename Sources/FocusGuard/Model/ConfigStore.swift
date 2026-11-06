@@ -42,8 +42,11 @@ final class ConfigStore {
         return try Config.decodeJSON(data)
     }
 
+    /// Refuses a config the daemon would refuse to read (over `Config.Limits`, duplicate ids):
+    /// writing one would leave a file both sides treat as unreadable.
     func save(_ config: Config) throws {
         defer { watch() }
+        try config.validate()
         let data = try config.encodeJSON()
         let tmp = supportDir + "/.config.json.\(getpid()).tmp"
         guard FileManager.default.createFile(atPath: tmp, contents: data, attributes: [.posixPermissions: 0o664]) else {

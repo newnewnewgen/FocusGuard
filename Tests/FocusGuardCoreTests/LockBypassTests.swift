@@ -142,4 +142,41 @@ final class LockBypassTests: XCTestCase {
         fewer.schedules[0].days.remove(.fri)
         XCTAssertEqual(fewer.weakens(from: always, at: at(.mon, "10:00")), .impossible, "Friday is four days away and still protected")
     }
+
+    // MARK: Permanent locks
+
+    func testAGaplessWeekWithAnyImpossibleWindowIsPermanent() {
+        let week = Set(Weekday.allCases)
+        let trap = Config(blockLists: [list], schedules: [
+            window("day", week, "00:00", "23:59", mode: .basic), window("bridge", week, "23:00", "01:00", mode: .basic),
+            window("friday", [.fri], "09:00", "10:00"),
+        ])
+        XCTAssertTrue(trap.isPermanentlyLocked)
+        var gone = trap
+        gone.schedules.removeLast()
+        XCTAssertEqual(gone.weakens(from: trap, at: at(.mon, "10:00")), .impossible, "which is why the app refuses to save it")
+        XCTAssertFalse(gone.isPermanentlyLocked, "no Impossible window: gapless Basic is harmless")
+    }
+
+    func testAGapAnywhereInTheWeekIsNotPermanent() {
+        XCTAssertFalse(locked.isPermanentlyLocked)
+        let week = Set(Weekday.allCases)
+        let allDay = Config(blockLists: [list], schedules: [window("day", week, "00:00", "23:59")])
+        XCTAssertFalse(allDay.isPermanentlyLocked, "23:59 is free every day")
+        var off = Config(blockLists: [list], schedules: [window("day", week, "00:00", "23:59"), window("bridge", week, "23:00", "01:00")])
+        XCTAssertTrue(off.isPermanentlyLocked)
+        off.schedules[1].enabled = false
+        XCTAssertFalse(off.isPermanentlyLocked)
+    }
+
+    func testAlternatingProposalsShareTheVerdictCache() {
+        var r = ConfigResolver()
+        _ = r.resolve(live: locked, at: at(.mon, "10:00"), monotonic: 0)
+        var off = locked
+        off.schedules[0].enabled = false
+        var fewer = locked
+        fewer.blockLists[0].domains = []
+        for tick in 1...10 { _ = r.resolve(live: tick % 2 == 0 ? off : fewer, at: at(.mon, "10:00"), monotonic: Double(tick) * 2) }
+        XCTAssertEqual(r.verdictsComputed, 2, "two proposals, one minute: two judgements, not ten")
+    }
 }

@@ -52,6 +52,20 @@ extension Config {
         return state
     }
 
+    /// True when some window is Impossible and there is no minute in the whole week with nothing
+    /// active. An Impossible window protects its items for the whole stretch it belongs to, so
+    /// with no gap that stretch never ends: nothing could be removed or loosened again without
+    /// sudo, even if most of the week is Basic. The app refuses to save such a config.
+    public var isPermanentlyLocked: Bool {
+        guard schedules.contains(where: { $0.enabled && $0.unlockMode == .impossible && $0.start != $0.end && !$0.days.isEmpty }) else { return false }
+        let start = LocalMoment(weekday: .mon, minutesSinceMidnight: 0)
+        for step in 0..<Self.lockHorizonMinutes {
+            let m = start.advanced(byMinutes: step)
+            if !schedules.contains(where: { $0.isActive(at: m) }) { return false }
+        }
+        return true
+    }
+
     /// nil when replacing `old` with `self` unblocks nothing before `old` would have; otherwise the
     /// strictest `old` mode among the items whose protection is cut.
     ///
