@@ -4,6 +4,7 @@ import SwiftUI
 struct FocusGuardApp: App {
     @NSApplicationDelegateAdaptor(ReopenHandler.self) private var reopen
     @State private var model = AppModel()
+    @State private var dock = DockFallback()
     /// Decided once at launch: a fresh install opens the settings window by itself (a menu-bar-only
     /// app whose icon sits behind the notch would otherwise give a first-time user nothing to
     /// click). Once the daemon is enabled, launches are silent, as a login item should be.
@@ -25,7 +26,7 @@ struct FocusGuardApp: App {
     /// presented at launch, neither of which the Settings scene allows.
     private var settingsWindow: some Scene {
         Window("FocusGuard", id: Self.settingsWindowID) {
-            SettingsView().environment(model)
+            SettingsView().environment(model).environment(dock)
         }
         .windowResizability(.contentSize)
         // `open focusguard://settings` (and a reopen of the app) brings this window up even when
@@ -44,11 +45,12 @@ struct FocusGuardApp: App {
     static let settingsURL = URL(string: "focusguard://settings")!
 }
 
-/// Clicking the app in Finder or the Dock while it is already running opens the settings
-/// window; without this an LSUIElement app silently does nothing on reopen.
+/// Clicking the app in Finder, Spotlight or the Dock while it is already running opens the
+/// settings window (or brings it forward); without this an LSUIElement app silently does nothing
+/// on reopen. Unconditional: `hasVisibleWindows` also counts the status-item window.
 final class ReopenHandler: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { NSWorkspace.shared.open(FocusGuardApp.settingsURL) }
+        NSWorkspace.shared.open(FocusGuardApp.settingsURL)
         return false
     }
 }

@@ -24,6 +24,9 @@ final class Installer {
     var canInstall: Bool { inApplications && !legacyInstallPresent }
 
     var daemonRunningFromBundle: Bool { daemonProcess?.isFromBundle == true }
+    /// The bundle was updated under a running daemon, which is therefore still the old code.
+    var daemonIsStale: Bool { daemonRunningFromBundle && daemonProcess?.isOlderThanBinary == true }
+    private(set) var restarting = false
 
     func refresh() {
         daemonStatus = daemon.status
@@ -49,6 +52,28 @@ final class Installer {
         } catch {
             if service.status != .requiresApproval && service.status != .enabled {
                 lastError = "Could not register \(what): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Replace a running daemon with the binary now in the bundle: unregister (launchd sends
+    /// SIGTERM, the daemon clears its hosts region) and register again (launchd starts the new
+    /// one, which re-applies the block within a tick). Needs no password. Daemons built since
+    /// 0.3.0 also restart themselves when their executable is replaced; this covers older ones
+    /// and anything that went wrong.
+    func restartDaemon() {
+        guard !restarting else { return }
+        restarting = true
+        lastError = nil
+        AppModel.log.info("restarting daemon: unregister then register")
+        daemon.unregister { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error { AppModel.log.error("daemon unregister: \(error.localizedDescription, privacy: .public)") }
+                self.register(self.daemon, what: "daemon")
+                self.restarting = false
+                self.refresh()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refresh() }
             }
         }
     }

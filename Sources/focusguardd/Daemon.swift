@@ -15,7 +15,31 @@ final class Daemon {
     private var lastSavedLastGood: Config?
     private var lastSavedClockState: ClockGuard.State?
 
+    /// Our own executable as it was when we started, so an app update (which replaces the file
+    /// under us) is noticed: launchd would otherwise keep this process, the old code, until reboot.
+    private let executablePath = Bundle.main.executablePath
+    private let startIdentity: FileIdentity?
+    private var replacementSeen: FileIdentity?
+
+    private struct FileIdentity: Equatable {
+        let inode: UInt64
+        let size: Int64
+        let modifiedSeconds: Int
+        let modifiedNanos: Int
+
+        init?(path: String?) {
+            guard let path else { return nil }
+            var st = stat()
+            guard stat(path, &st) == 0 else { return nil }
+            inode = UInt64(st.st_ino)
+            size = Int64(st.st_size)
+            modifiedSeconds = Int(st.st_mtimespec.tv_sec)
+            modifiedNanos = Int(st.st_mtimespec.tv_nsec)
+        }
+    }
+
     init() {
+        startIdentity = FileIdentity(path: executablePath)
         do {
             try ConfigFile.ensureSupportDir()
         } catch {
@@ -48,6 +72,27 @@ final class Daemon {
             log.info("tick: source=\(result.source) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count)")
         }
         reschedule(interval: result.activeSet.bundleIDs.isEmpty ? Self.idleTick : Self.activeTick)
+        restartIfReplaced()
+    }
+
+    /// Exit so launchd (KeepAlive) starts the binary now on disk. One `stat` per tick. The new
+    /// file must look the same on two consecutive ticks, so a copy still in progress is not
+    /// launched half-written. A missing file (app deleted) is ignored: keep enforcing.
+    ///
+    /// Deliberately no `teardown()`: the hosts region stays in place across the restart and the
+    /// new process converges to it, so an update never opens an unblocked gap.
+    private func restartIfReplaced() {
+        guard timer != nil, let startIdentity, let now = FileIdentity(path: executablePath),
+              now != startIdentity else {
+            replacementSeen = nil
+            return
+        }
+        guard now == replacementSeen else {
+            replacementSeen = now
+            return
+        }
+        log.info("focusguardd executable was replaced; exiting so launchd starts the new version")
+        exit(0)
     }
 
     /// Wall-clock deadlines keep firing on schedule after sleep; a 2 s leeway still lets the kernel

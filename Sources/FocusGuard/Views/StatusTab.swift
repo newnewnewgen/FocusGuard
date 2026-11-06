@@ -3,6 +3,7 @@ import ServiceManagement
 
 struct StatusTab: View {
     @Environment(AppModel.self) private var model
+    @Environment(DockFallback.self) private var dock
 
     var body: some View {
         let inst = model.installer
@@ -25,6 +26,14 @@ struct StatusTab: View {
                     }
                 }
                 if let err = inst.lastError { Text(err).foregroundStyle(.red).font(.callout) }
+            }
+
+            Section {
+                Toggle("Show FocusGuard in the Dock", isOn: Binding(get: { dock.showsInDock }, set: { dock.setShowsInDock($0) }))
+                Text(dock.menuBarIconHidden
+                     ? "macOS is hiding the menu-bar icon because the menu bar is full, so FocusGuard shows in the Dock. You can always open this window from Spotlight too."
+                     : "FocusGuard lives in the menu bar (shield icon). If macOS hides that icon when the menu bar is full, it shows in the Dock automatically.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Now") {
@@ -55,13 +64,18 @@ struct StatusTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { inst.refresh() }
+        .onAppear { inst.refresh(); dock.check() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in inst.refresh() }
     }
 
     @ViewBuilder
     private func daemonRow(_ inst: Installer) -> some View {
         switch inst.daemonStatus {
+        case .enabled where inst.daemonIsStale:
+            row(done: false, "Background daemon is an older version",
+                detail: "FocusGuard was updated while it was running. Restarting takes a few seconds and needs no password.") {
+                Button(inst.restarting ? "Restarting…" : "Restart daemon") { inst.restartDaemon() }.disabled(inst.restarting)
+            }
         case .enabled where inst.daemonRunningFromBundle:
             if let proc = inst.daemonProcess {
                 row(done: true, "Background daemon running", detail: "pid \(proc.pid)")

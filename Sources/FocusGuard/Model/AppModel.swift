@@ -37,6 +37,12 @@ final class AppModel {
         store.onExternalChange = { [weak self] in self?.reload() }
         clock.onFire = { [weak self] in self?.refresh() }
         reload()
+        // An app update replaces the daemon's binary under it. Daemons since 0.3.0 restart
+        // themselves; an older one is restarted here, once, when the updated app first launches.
+        DispatchQueue.main.async { [installer] in
+            installer.refresh()
+            if installer.daemonIsStale { installer.restartDaemon() }
+        }
     }
 
     // MARK: Derived state

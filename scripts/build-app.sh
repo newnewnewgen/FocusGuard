@@ -19,9 +19,13 @@ cp "$BIN/focusguardd" "$APP/Contents/MacOS/focusguardd"
 cp Sources/FocusGuard/Info.plist "$APP/Contents/Info.plist"
 cp launchd/com.focusguard.daemon.plist "$APP/Contents/Library/LaunchDaemons/"
 cp launchd/com.focusguard.app.plist    "$APP/Contents/Library/LaunchAgents/"
+cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # regenerate: swift scripts/make-icon.swift
 echo -n "APPL????" > "$APP/Contents/PkgInfo"
 
 # Ad-hoc: no developer account. SMAppService accepts this from /Applications (spike 2026-10-30).
-codesign --force --deep --sign - "$APP"
+# Inside-out, with a fixed identifier on the daemon: `--deep` would give the bare Mach-O an
+# identifier derived from its hash, different on every build.
+codesign --force --sign - --identifier com.focusguard.daemon "$APP/Contents/MacOS/focusguardd"
+codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 echo "built $APP"
