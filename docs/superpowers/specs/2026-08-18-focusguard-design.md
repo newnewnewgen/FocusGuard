@@ -460,3 +460,90 @@ launch Chess during a window and measure kill latency from the launch
 notification (~100 ms target), friction challenge blocks paste, impossible
 locks controls, boundary timer flips status on the minute. Resolves the
 `SMAppService` question in §9.
+
+## 11. Revision 2026-11-06 — the daemon is the enforcer; root-owned install
+
+An independent QA pass (`docs/qa/2026-11-06-independent-qa.md`) and the live fixes that
+followed changed four things. Where this section and §3, §6, §9 or §10 disagree, this section
+is current.
+
+### 11.1 Why
+
+1. **Privilege.** §10.7 registered the daemon with `SMAppService` and ran it from
+   `Contents/MacOS/focusguardd` inside the app bundle. That bundle is owned by the logged-in
+   user. Verified on 2026-11-06: replacing the file with `ditto`, no password, had launchd
+   running the new file as root 52 s later. Any process running as the user could become root,
+   and no unlock mode could be more than friction, since the enforcer itself was replaceable.
+2. **Impossible was UI-only** (§10.4: "this gate is the app's own friction"). The app decided
+   locks from the raw wall clock, and `config.json` could be edited or deleted by hand.
+3. **The self-relaunching agent did not work.** `SMAppService` reported it enabled while
+   launchd had no such job; the app was not relaunched when killed and would not have started
+   at login.
+4. **The app could not be found.** With a full menu bar macOS does not draw the status item
+   (measured: `kCGWindowIsOnscreen` false), and an `LSUIElement` app has no Dock icon.
+
+### 11.2 Install model (replaces §10.7)
+
+| What | Where | Owner / mode |
+|------|-------|--------------|
+| Daemon binary | `/Library/PrivilegedHelperTools/com.focusguard.daemon` | root:wheel 0755 |
+| launchd plist (absolute `ProgramArguments`) | `/Library/LaunchDaemons/com.focusguard.daemon.plist` | root:wheel 0644 |
+| Accepted config, clock anchor, status | `/var/db/FocusGuard/` (`last-good.json` 0644, `clock-state.json` 0600, `status.json` 0644) | root:wheel 0755 |
+| Proposal | `/Library/Application Support/FocusGuard/config.json` | user-writable, dir root:admin 0775 |
+
+`scripts/install-daemon-root.sh` writes all of the root-owned files. The app runs it through
+`osascript … with administrator privileges` (one standard password dialog); the command line
+runs it with `sudo`. Updating the daemon is the same script; the app offers it when the
+installed binary differs byte-for-byte from the bundled one. Nothing that runs as root is
+executed from a user-writable location. The state directory moved out of the support
+directory because a user with write access to a directory can rename its children aside.
+
+The app is a plain login item (`SMAppService.mainApp`) and no longer needs to be in
+`/Applications` for the daemon's sake. Quit quits. The two `SMAppService` plists still ship in
+the bundle, inert, only so an install made by ≤ 0.3 can be found and unregistered when the
+user clicks Reinstall.
+
+### 11.3 Impossible is enforced by the daemon (amends §10.4, §6)
+
+`config.json` is a proposal. `ConfigResolver` keeps the accepted config and, each tick, takes
+up a new proposal unless `proposal.weakens(from: accepted, at: trustedMoment) == .impossible`,
+in which case the accepted config stays in force (`source: held`) and the proposal is
+re-examined next tick. It is therefore accepted by itself when the window ends. `trustedMoment`
+is the clock guard's time (§6), so neither a hand edit nor a clock change lifts an Impossible
+block. A missing or unreadable file falls back to the accepted config as in §6, but the 24 h
+ceiling does not apply while a vanish-time window that is Impossible is still active.
+
+Friction and Basic remain app-level: the daemon accepts those changes. The README says so.
+
+The daemon publishes `DaemonStatus` (version, pid, config source, clock offset, tampered flag)
+in `status.json`, rewritten only on change. The app watches the directory, adds the offset to
+`Date()` for every lock decision, judges edits against the accepted config whenever that
+differs from `config.json`, and shows a refused change as "on hold" with a button to discard
+it. Uninstall is judged as `Config.empty.weakens(from: enforced)`, i.e. with the full
+look-ahead, not just the windows active this minute.
+
+### 11.4 Discoverability
+
+`DockFallback` asks the window server whether the status item is on screen (once after launch,
+then on occlusion, screen and activation events; never on a timer). If it is not, the app
+becomes a regular Dock app. Sticky, because visibility depends on the frontmost app's menus;
+remembered in `UserDefaults`; a toggle in Status. Opening Settings from the menu, the Dock,
+Spotlight or `focusguard://settings` activates the app ignoring other apps and fronts the
+existing window; `openWindow` alone left it behind whatever was in front.
+
+### 11.5 Smaller changes
+
+- Challenge field accepts only single-keystroke edits (`Challenge.isSingleKeystroke`): paste
+  over a selection used to pass the "grew by more than one character" check.
+- `ConfigStore`: a file that exists but cannot be read throws rather than loading as empty
+  (the next edit used to overwrite it); the own-write marker is one-shot.
+- `ProtectedApps` (Finder, Dock, loginwindow, SystemUIServer, Control Center, WindowManager,
+  Spotlight, FocusGuard) are dropped from every active set and hidden from the picker.
+- First tests for the app target (`FocusGuardAppTests`).
+
+### 11.6 Still open
+
+- Reboot: daemon and login item starting after a restart has not been observed.
+- Sleep/wake across a boundary, Firefox, and the uninstall path are untested on hardware.
+- `AppModel`, `AppKiller` and `Installer` state mapping have no unit tests.
+

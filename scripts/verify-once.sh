@@ -29,7 +29,7 @@ sleep 1
 if pgrep -xq Chess; then echo "FAIL: Chess still running"; else echo "ok: Chess was quit"; fi
 if grep -q "0.0.0.0 example.com" /etc/hosts; then echo "ok: hosts region present"; else echo "FAIL: no hosts region"; fi
 if curl -sS -m 5 -o /dev/null https://example.com 2>/dev/null; then echo "FAIL: example.com still reachable"; else echo "ok: example.com blocked"; fi
-sudo ls -la "/Library/Application Support/FocusGuard" "/Library/Application Support/FocusGuard/state"
+sudo ls -la "/Library/Application Support/FocusGuard" /var/db/FocusGuard
 
 echo "--- disable the window, one more pass"
 sudo sed -i '' 's/"enabled": true/"enabled": false/' "$CFG"
