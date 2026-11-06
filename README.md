@@ -130,6 +130,9 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
     swift test                 # Core and app-target tests
     scripts/build-app.sh       # build/FocusGuard.app, ad-hoc signed
 
+`scripts/verify-impossible.sh` attacks a real 5-minute Impossible window the ways a user could
+without a password and checks it holds, then releases by itself (~6 minutes, no `sudo`).
+
 Daemon-only acceptance scripts (need `sudo`): `scripts/verify-once.sh` (single pass, no
 launchd), `scripts/verify-launchd.sh` (installed daemon, ~5 minutes), `scripts/verify-teardown.sh`
 (SIGTERM cleanup, ~1 minute).

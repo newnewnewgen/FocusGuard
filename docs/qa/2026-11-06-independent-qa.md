@@ -155,3 +155,33 @@ Each has a regression test in `LockBypassTests` / `ReconcilerZoneTests`.
   running as the user could alter them and wait for the next password prompt. Signing would
   close that; without a developer account it is narrowed, not closed.
 
+## Live acceptance of the daemon lock (2026-11-06 14:27–14:45, this Mac)
+
+Install, after clicking Reinstall… and one password prompt:
+
+- `/Library/PrivilegedHelperTools/com.focusguard.daemon` root:wheel 0755, byte-identical to the
+  bundled daemon; `/Library/LaunchDaemons/com.focusguard.daemon.plist` root:wheel 0644.
+- `launchctl print`: `path = /Library/LaunchDaemons/…`, `type = LaunchDaemon`, running as root.
+  The SMAppService registration is gone.
+- `/var/db/FocusGuard` root:wheel 0755 with `last-good.json`, `clock-state.json` (0600),
+  `status.json`, `time-zone`. Not writable by the user.
+
+`scripts/verify-impossible.sh` (no password; a real Impossible window 14:38–14:44 blocking
+example.com and Chess), 29 checks, **ALL OK**:
+
+| Attack, as the logged-in user | Result |
+|---|---|
+| Disable the window in `config.json` | still blocked; daemon `source=held` |
+| Delete `config.json` | still blocked; `source=lastGood` |
+| Twin windows sharing one id | still blocked; file rejected (`duplicateID`) |
+| A valid config that blocks nothing | still blocked; `source=held` |
+| Garbage in `config.json` | still blocked |
+| Write, create in, or rename the state dir; replace the daemon binary; `launchctl bootout`; `kill`; edit `/etc/hosts` | all refused by the OS |
+| Chess opened twice during the window | killed both times |
+| Leave a "disable it" proposal in the file | released at 14:44:01 by itself, proposal taken up, site reachable again |
+
+The daemon logged 16 lines for the whole run: each refusal once, not once per tick.
+
+Not exercised live (need admin authentication to attempt): changing the clock or the time zone
+during the window. Both are covered by unit tests (`ClockGuardTests`, `ReconcilerZoneTests`).
+
