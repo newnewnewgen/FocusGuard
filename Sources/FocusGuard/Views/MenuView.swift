@@ -23,12 +23,12 @@ struct MenuView: View {
             Text("⚠︎ config.json is unreadable")
         }
         Divider()
-        Button("Open Settings…") { openWindow(id: FocusGuardApp.settingsWindowID) }.keyboardShortcut(",")
+        Button("Open Settings…") { FocusGuardApp.showSettings(openWindow) }.keyboardShortcut(",")
         Button("Quit FocusGuard (and stop at login)") {
             if model.quitNeedsSettingsWindow {
                 // The challenge sheet / locked alert attach to the settings window; let it exist
-                // before the gate presents them.
-                openWindow(id: FocusGuardApp.settingsWindowID)
+                // (and be in front) before the gate presents them.
+                FocusGuardApp.showSettings(openWindow)
                 DispatchQueue.main.async { model.requestQuit() }
             } else {
                 model.requestQuit()

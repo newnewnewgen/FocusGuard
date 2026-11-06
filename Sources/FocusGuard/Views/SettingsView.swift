@@ -19,6 +19,9 @@ struct SettingsView: View {
         } message: {
             Text(model.lockedMessage ?? "")
         }
-        .onAppear { NSApp.activate() }
+        .onAppear { FocusGuardApp.bringSettingsToFront() }
+        // A second `open focusguard://settings` (Spotlight, Dock, Terminal) lands here when the
+        // window already exists; front it rather than leaving it wherever it was.
+        .onOpenURL { _ in FocusGuardApp.bringSettingsToFront() }
     }
 }

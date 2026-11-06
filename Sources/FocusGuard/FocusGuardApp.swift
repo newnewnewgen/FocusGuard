@@ -43,6 +43,32 @@ struct FocusGuardApp: App {
     static let settingsWindowID = "settings"
     static let settingsURLHost = "settings"
     static let settingsURL = URL(string: "focusguard://settings")!
+
+    /// Put the settings window in front of everything, whatever state it is in. `openWindow`
+    /// alone is not enough for a menu-bar app: nothing activates us, so an already-open window
+    /// stays behind other apps (or minimised, or on another Space) and the click looks dead.
+    /// `activate(ignoringOtherApps:)` rather than the cooperative `activate()`, which macOS may
+    /// decline for an app the user was not just using.
+    @MainActor static func bringSettingsToFront() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where isSettingsWindow(window) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    @MainActor static func isSettingsWindow(_ window: NSWindow) -> Bool {
+        window.identifier?.rawValue.contains(settingsWindowID) == true
+            || (window.title == "FocusGuard" && window.styleMask.contains(.titled))
+    }
+
+    /// Open (or re-front) the settings window from a menu action. The second pass runs after
+    /// SwiftUI has created the window when it did not exist yet.
+    @MainActor static func showSettings(_ openWindow: OpenWindowAction) {
+        openWindow(id: settingsWindowID)
+        bringSettingsToFront()
+        DispatchQueue.main.async { bringSettingsToFront() }
+    }
 }
 
 /// Clicking the app in Finder, Spotlight or the Dock while it is already running opens the
@@ -51,6 +77,7 @@ struct FocusGuardApp: App {
 final class ReopenHandler: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         NSWorkspace.shared.open(FocusGuardApp.settingsURL)
+        DispatchQueue.main.async { FocusGuardApp.bringSettingsToFront() }
         return false
     }
 }
