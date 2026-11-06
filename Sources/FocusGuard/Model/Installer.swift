@@ -1,172 +1,162 @@
 import AppKit
-import Darwin
 import FocusGuardCore
 import Observation
 import ServiceManagement
 
-/// Registers the embedded daemon and the app's own KeepAlive agent with SMAppService, and
-/// handles the two things that stop that working: not being in /Applications, and the legacy
-/// manual install holding the same launchd label.
+/// Installs, updates and removes the daemon, and manages "open at login".
+///
+/// The daemon binary and its launchd plist are **root-owned** (`Paths.daemonBinary`,
+/// `Paths.daemonPlist`), written by `install-daemon-root.sh` behind one macOS password prompt.
+/// Up to 0.3 the daemon was registered with `SMAppService` and ran straight out of the app
+/// bundle; that bundle is writable by the logged-in user, so any program running as the user
+/// could replace the binary and have launchd run it as root. Hence the password, and hence
+/// nothing here runs code as root from a user-writable place.
 @MainActor @Observable
 final class Installer {
-    private(set) var daemonStatus: SMAppService.Status = .notFound
-    private(set) var agentStatus: SMAppService.Status = .notFound
     private(set) var daemonProcess: DaemonProbe.Result?
+    private(set) var status: DaemonStatus?
+    private(set) var loginItemStatus: SMAppService.Status = .notRegistered
     private(set) var lastError: String?
+    /// A password prompt or the script behind it is in flight.
+    private(set) var working = false
 
-    private let daemon = SMAppService.daemon(plistName: Paths.daemonLabel + ".plist")
-    private let agent = SMAppService.agent(plistName: Paths.agentLabel + ".plist")
+    private let loginItem = SMAppService.mainApp
+    private static let bundledDaemon = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/focusguardd").path
+    private static let installScript = Bundle.main.url(forResource: "install-daemon-root", withExtension: "sh")?.path
+    private static let uninstallScript = Bundle.main.url(forResource: "uninstall-daemon-root", withExtension: "sh")?.path
 
-    static let applicationsURL = URL(fileURLWithPath: "/Applications/FocusGuard.app")
+    // MARK: State
 
-    var inApplications: Bool { Bundle.main.bundleURL.path.hasPrefix("/Applications/") }
-    var legacyInstallPresent: Bool { FileManager.default.fileExists(atPath: Paths.legacyDaemonPlist) }
-    var canInstall: Bool { inApplications && !legacyInstallPresent }
-
-    var daemonRunningFromBundle: Bool { daemonProcess?.isFromBundle == true }
-    /// The bundle was updated under a running daemon, which is therefore still the old code.
-    var daemonIsStale: Bool { daemonRunningFromBundle && daemonProcess?.isOlderThanBinary == true }
-    private(set) var restarting = false
+    var daemonInstalled: Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: Paths.daemonPlist) && fm.fileExists(atPath: Paths.daemonBinary)
+    }
+    var daemonRunning: Bool { daemonProcess?.path == Paths.daemonBinary }
+    /// A daemon from before 0.4 is still running out of an app bundle or /usr/local.
+    var legacyDaemonRunning: Bool { daemonProcess != nil && !daemonRunning }
+    /// The installed daemon is not byte-for-byte the one this app ships.
+    var needsUpdate: Bool {
+        daemonInstalled && !FileManager.default.contentsEqual(atPath: Paths.daemonBinary, andPath: Self.bundledDaemon)
+    }
+    var opensAtLogin: Bool { loginItemStatus == .enabled }
 
     func refresh() {
-        daemonStatus = daemon.status
-        agentStatus = agent.status
         daemonProcess = DaemonProbe.find()
-        AppModel.log.info("install status: daemon=\(self.daemonStatus.label, privacy: .public) agent=\(self.agentStatus.label, privacy: .public) process=\(self.daemonProcess?.path ?? "none", privacy: .public)")
+        status = Self.readStatus()
+        loginItemStatus = loginItem.status
+        AppModel.log.info("install status: installed=\(self.daemonInstalled) running=\(self.daemonRunning) legacy=\(self.legacyDaemonRunning) update=\(self.needsUpdate) version=\(self.status?.version ?? "?", privacy: .public) source=\(self.status?.source.rawValue ?? "?", privacy: .public) login=\(self.loginItemStatus.label, privacy: .public)")
     }
 
-    /// Set by Install, cleared by Uninstall: lets a later launch tell "the user removed protection"
-    /// from "protection should be there and is not" (a failed restart, a lost registration).
-    static let installedKey = "protectionInstalled"
-    private var wantsProtection: Bool {
-        // Installs made before this key existed are recognised by their enabled login item.
-        UserDefaults.standard.bool(forKey: Self.installedKey) || agentStatus == .enabled
+    /// Only the cheap part: called whenever the daemon rewrites status.json.
+    func refreshStatus() { status = Self.readStatus() }
+
+    private static func readStatus() -> DaemonStatus? {
+        guard let data = FileManager.default.contents(atPath: Paths.status) else { return nil }
+        return try? JSONDecoder().decode(DaemonStatus.self, from: data)
     }
 
-    /// Called once at launch. Restarts a daemon left running old code by an app update, and
-    /// re-registers a daemon that should be installed but is not.
-    func repairIfNeeded() {
-        refresh()
-        if daemonIsStale {
-            restartDaemon()
-        } else if daemonStatus == .notRegistered, wantsProtection, canInstall {
-            AppModel.log.info("daemon should be installed but is not registered; registering")
-            registerDaemonWithRetry(attemptsLeft: 2)
-        }
-    }
+    // MARK: Daemon
 
-    /// Register both. The first daemon registration throws "Operation not permitted" while the
-    /// status moves to requiresApproval — that is the normal path, not an error.
+    /// Install or update: one password prompt. Also the migration from the pre-0.4 install.
     func install() {
-        lastError = nil
-        UserDefaults.standard.set(true, forKey: Self.installedKey)
-        register(daemon, what: "daemon")
-        register(agent, what: "login item")
-        refresh()
-        // launchd needs a moment to start the daemon; one delayed re-probe, not a loop.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refresh() }
-    }
-
-    private func register(_ service: SMAppService, what: String) {
-        do {
-            try service.register()
-            AppModel.log.info("register \(what, privacy: .public): ok, status=\(service.status.label, privacy: .public)")
-        } catch {
-            AppModel.log.error("register \(what, privacy: .public): \(error.localizedDescription, privacy: .public), status=\(service.status.label, privacy: .public)")
-            if service.status != .requiresApproval && service.status != .enabled {
-                lastError = "Could not register \(what): \(error.localizedDescription)"
-            }
-        }
-    }
-
-    /// `unregister`'s completion handler fires before launchd has finished removing the job, and a
-    /// register that lands in that gap is silently lost (observed: the item is found "enabled",
-    /// then the job disappears). So: wait, register, and check that it stuck.
-    private func registerDaemonWithRetry(attemptsLeft: Int) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self else { return }
-            self.register(self.daemon, what: "daemon")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                guard let self else { return }
-                self.refresh()
-                let settled = self.daemonStatus == .requiresApproval
-                    || (self.daemonStatus == .enabled && self.daemonProcess != nil)
-                if settled || attemptsLeft <= 1 {
-                    self.restarting = false
-                    if !settled { self.lastError = "The daemon did not start. Use Re-install, or Install protection, below." }
-                } else {
-                    AppModel.log.info("daemon not running after register; retrying")
-                    self.registerDaemonWithRetry(attemptsLeft: attemptsLeft - 1)
-                }
-            }
-        }
-    }
-
-    /// Replace a running daemon with the binary now in the bundle: unregister (launchd sends
-    /// SIGTERM, the daemon clears its hosts region) and register again (launchd starts the new
-    /// one, which re-applies the block within a tick). Needs no password. Daemons built since
-    /// 0.3.0 also restart themselves when their executable is replaced; this covers older ones
-    /// and anything that went wrong.
-    func restartDaemon() {
-        guard !restarting else { return }
-        restarting = true
-        lastError = nil
-        AppModel.log.info("restarting daemon: unregister then register")
-        daemon.unregister { [weak self] error in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if let error { AppModel.log.error("daemon unregister: \(error.localizedDescription, privacy: .public)") }
-                self.refresh()
-                self.registerDaemonWithRetry(attemptsLeft: 2)
+        guard let script = Self.installScript else { lastError = "This copy of FocusGuard is missing its installer script."; return }
+        retireLegacyRegistrations { [weak self] in
+            self?.runAsRoot([script, Self.bundledDaemon],
+                            prompt: "FocusGuard needs your password to install its background daemon.") { ok in
+                // Turn on "open at login" with a fresh install; the user can switch it off.
+                if ok, self?.opensAtLogin == false { self?.setOpensAtLogin(true) }
             }
         }
     }
 
     func uninstall() {
-        lastError = nil
-        UserDefaults.standard.set(false, forKey: Self.installedKey)
-        do { try daemon.unregister() } catch { lastError = "Could not remove daemon: \(error.localizedDescription)" }
-        try? agent.unregister()
-        refresh()
+        guard let script = Self.uninstallScript else { lastError = "This copy of FocusGuard is missing its uninstaller script."; return }
+        retireLegacyRegistrations { [weak self] in
+            self?.runAsRoot([script], prompt: "FocusGuard needs your password to remove its background daemon.") { ok in
+                if ok { self?.setOpensAtLogin(false) }
+            }
+        }
     }
 
-    func unregisterAgent() throws { try agent.unregister() }
-
-    func openLoginItems() { SMAppService.openSystemSettingsLoginItems() }
-
-    /// Copy this bundle to /Applications, launch the copy, quit. /Applications is admin-writable.
-    /// Refused while anything is running from the destination bundle: replacing it under a live
-    /// daemon or a second app instance would pull the files out from under them.
-    func moveToApplications() {
+    /// `do shell script … with administrator privileges` shows the standard macOS password
+    /// dialog and runs the command as root. Run through /usr/bin/osascript so the dialog does not
+    /// block the main thread.
+    private func runAsRoot(_ command: [String], prompt: String, then: @escaping (Bool) -> Void) {
+        guard !working else { return }
+        working = true
         lastError = nil
-        let fm = FileManager.default
-        let dest = Self.applicationsURL
-        let daemonFromDest = DaemonProbe.find()?.path.hasPrefix(dest.path) == true
-        let appFromDest = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier!)
-            .contains { $0.bundleURL?.standardizedFileURL == dest.standardizedFileURL }
-        if daemonFromDest || appFromDest {
-            lastError = "FocusGuard is already running from /Applications. Quit this copy and use that one."
-            return
+        let shell = (["/bin/bash"] + command).map(Self.shellQuoted).joined(separator: " ")
+        let source = "do shell script \(Self.appleScriptQuoted(shell)) with prompt \(Self.appleScriptQuoted(prompt)) with administrator privileges"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", source]
+        let errors = Pipe()
+        process.standardError = errors
+        process.standardOutput = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] finished in
+            let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.working = false
+                let ok = finished.terminationStatus == 0
+                if !ok, !message.contains("-128") {   // -128: the user clicked Cancel
+                    self.lastError = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                    AppModel.log.error("privileged step failed: \(message, privacy: .public)")
+                }
+                self.refresh()
+                then(ok)
+                // launchd needs a moment to start (or stop) the daemon; one delayed re-probe.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refresh() }
+            }
         }
         do {
-            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            try fm.copyItem(at: Bundle.main.bundleURL, to: dest)
+            try process.run()
         } catch {
-            lastError = "Could not copy to /Applications: \(error.localizedDescription)"
-            return
+            working = false
+            lastError = "Could not ask for your password: \(error.localizedDescription)"
         }
-        // The copy inherits any quarantine flag from a downloaded bundle; drop it (best effort).
-        _ = removexattr(dest.path, "com.apple.quarantine", XATTR_NOFOLLOW)
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: dest, configuration: cfg) { _, error in
-            DispatchQueue.main.async {
-                if let error {
-                    self.lastError = "Copied to /Applications but could not launch it: \(error.localizedDescription)"
-                } else {
-                    NSApp.terminate(nil)
-                }
+    }
+
+    nonisolated static func shellQuoted(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    nonisolated static func appleScriptQuoted(_ s: String) -> String {
+        "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
+    // MARK: Open at login
+
+    func setOpensAtLogin(_ on: Bool) {
+        do {
+            if on { try loginItem.register() } else { try loginItem.unregister() }
+        } catch {
+            AppModel.log.error("login item \(on ? "register" : "unregister", privacy: .public): \(error.localizedDescription, privacy: .public)")
+            // Unregistering something that is not registered is not worth showing.
+            if on { lastError = "Could not add FocusGuard to Login Items: \(error.localizedDescription)" }
+        }
+        loginItemStatus = loginItem.status
+    }
+
+    // MARK: Migration from ≤ 0.3
+
+    /// Up to 0.3 the daemon and a self-relaunching agent were registered with SMAppService from
+    /// plists inside the bundle (still shipped, inert, so they can be found and unregistered
+    /// here). Drop those registrations before the root-owned install takes the same label.
+    /// `unregister` reports back before launchd has finished, hence the pause.
+    private func retireLegacyRegistrations(then next: @escaping () -> Void) {
+        let legacy = [SMAppService.daemon(plistName: Paths.daemonLabel + ".plist"),
+                      SMAppService.agent(plistName: "com.focusguard.app.plist")]
+            .filter { $0.status == .enabled || $0.status == .requiresApproval }
+        guard !legacy.isEmpty else { next(); return }
+        AppModel.log.info("retiring \(legacy.count) SMAppService registration(s) from an older version")
+        let group = DispatchGroup()
+        for service in legacy {
+            group.enter()
+            service.unregister { error in
+                if let error { AppModel.log.error("legacy unregister: \(error.localizedDescription, privacy: .public)") }
+                group.leave()
             }
+        }
+        group.notify(queue: .main) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { next() }
         }
     }
 }
@@ -174,10 +164,10 @@ final class Installer {
 extension SMAppService.Status {
     var label: String {
         switch self {
-        case .notRegistered: return "not installed"
-        case .enabled: return "enabled"
+        case .notRegistered: return "off"
+        case .enabled: return "on"
         case .requiresApproval: return "waiting for approval"
-        case .notFound: return "not found in bundle"
+        case .notFound: return "not found"
         @unknown default: return "unknown"
         }
     }

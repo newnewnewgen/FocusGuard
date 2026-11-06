@@ -32,8 +32,8 @@ final class AppKiller {
     }
 
     private func enforce(_ app: NSRunningApplication, reason: String) {
-        guard let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier,
-              blocked().contains(id) else { return }
+        // `blocked()` is an ActiveSet, which already leaves out ProtectedApps (FocusGuard included).
+        guard let id = app.bundleIdentifier, blocked().contains(id) else { return }
         let ms = app.launchDate.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
         log.info("terminate \(id, privacy: .public) pid=\(app.processIdentifier) reason=\(reason, privacy: .public) sinceLaunch=\(ms)ms")
         // An app that is still launching ignores the polite quit (observed: Chess took the full

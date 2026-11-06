@@ -1,4 +1,5 @@
 import AppKit
+import FocusGuardCore
 import Foundation
 
 struct AppEntry: Identifiable, Hashable {
@@ -32,7 +33,7 @@ enum InstalledApps {
         let out = NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular }
             .compactMap { app -> AppEntry? in
-                guard let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier else { return nil }
+                guard let id = app.bundleIdentifier, !ProtectedApps.contains(id) else { return nil }
                 return AppEntry(bundleID: id, name: app.localizedName ?? id, url: app.bundleURL)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -54,7 +55,8 @@ enum InstalledApps {
             for name in names {
                 let url = URL(fileURLWithPath: dir).appendingPathComponent(name)
                 if name.hasSuffix(".app") {
-                    guard let id = Bundle(url: url)?.bundleIdentifier, !seen.contains(id) else { continue }
+                    guard let id = Bundle(url: url)?.bundleIdentifier, !seen.contains(id),
+                          !ProtectedApps.contains(id) else { continue }
                     seen.insert(id)
                     out.append(AppEntry(bundleID: id, name: displayName(url), url: url))
                 } else if depth > 0, !name.hasPrefix("."),

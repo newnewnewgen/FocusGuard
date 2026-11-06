@@ -14,5 +14,6 @@ let package = Package(
         .executableTarget(name: "focusguardd", dependencies: ["FocusGuardCore"]),
         .executableTarget(name: "FocusGuard", dependencies: ["FocusGuardCore"], exclude: ["Info.plist"]),
         .testTarget(name: "FocusGuardCoreTests", dependencies: ["FocusGuardCore"]),
+        .testTarget(name: "FocusGuardAppTests", dependencies: ["FocusGuard", "FocusGuardCore"]),
     ]
 )

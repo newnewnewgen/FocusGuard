@@ -2,12 +2,10 @@ import Foundation
 import FocusGuardCore
 
 final class Daemon {
-    /// Keep in step with CFBundleShortVersionString; logged at start so "which code is running?"
-    /// can be answered from the log.
-    static let version = "0.3.0"
     /// While a window is active: fast sweep so a blocked app dies within ~2 s.
     static let activeTick: TimeInterval = 2
-    /// Outside all windows: nothing to enforce, so wake rarely. A window boundary is therefore honoured within idleTick + leeway (32 s); the Plan 2 app tightens this with an exact timer.
+    /// Outside all windows: nothing to enforce, so wake rarely. A window boundary is therefore
+    /// honoured within idleTick + leeway (32 s) for sites; the app kills apps at the exact minute.
     static let idleTick: TimeInterval = 30
 
     private let log = OSLogAdapter()
@@ -17,51 +15,30 @@ final class Daemon {
     private var signalSources: [DispatchSourceSignal] = []
     private var lastSavedLastGood: Config?
     private var lastSavedClockState: ClockGuard.State?
-
-    /// Our own executable as it was when we started, so an app update (which replaces the file
-    /// under us) is noticed: launchd would otherwise keep this process, the old code, until reboot.
-    private let executablePath = Bundle.main.executablePath
-    private let startIdentity: FileIdentity?
-    private var replacementSeen: FileIdentity?
-
-    private struct FileIdentity: Equatable {
-        let inode: UInt64
-        let size: Int64
-        let modifiedSeconds: Int
-        let modifiedNanos: Int
-
-        init?(path: String?) {
-            guard let path else { return nil }
-            var st = stat()
-            guard stat(path, &st) == 0 else { return nil }
-            inode = UInt64(st.st_ino)
-            size = Int64(st.st_size)
-            modifiedSeconds = Int(st.st_mtimespec.tv_sec)
-            modifiedNanos = Int(st.st_mtimespec.tv_nsec)
-        }
-    }
+    private var lastSavedStatus: DaemonStatus?
 
     init() {
-        startIdentity = FileIdentity(path: executablePath)
         do {
-            try ConfigFile.ensureSupportDir()
+            try ConfigFile.ensureDirectories()
         } catch {
-            log.error("cannot create \(Paths.supportDir): \(error)")
+            log.error("cannot prepare \(Paths.supportDir) / \(Paths.stateDir): \(error)")
         }
         lastSavedClockState = ConfigFile.loadClockState()
+        lastSavedLastGood = ConfigFile.loadLastGood()
         reconciler = Reconciler(
             hosts: EtcHostsStore(path: Paths.hosts),
             dns: DSCacheFlusher(),
             processes: LibprocProcessController(),
             log: log,
             clockState: lastSavedClockState,
-            resolver: ConfigResolver(lastGood: ConfigFile.loadLastGood()))
+            resolver: ConfigResolver(lastGood: lastSavedLastGood))
     }
 
     /// One reconcile pass. Safe to call from `once` or from the timer.
     func tick() {
         let live = ConfigFile.load(log: log)
-        let result = reconciler.tick(live: live, clock: SystemClock.sample())
+        let clock = SystemClock.sample()
+        let result = reconciler.tick(live: live, clock: clock)
         if let good = reconciler.lastGoodConfig, good != lastSavedLastGood {
             ConfigFile.saveLastGood(good)
             lastSavedLastGood = good
@@ -71,31 +48,19 @@ final class Daemon {
             ConfigFile.saveClockState(state)
             lastSavedClockState = state
         }
+        // Likewise the status: it changes when the config source or the clock verdict does.
+        let status = DaemonStatus(
+            pid: getpid(), source: result.source,
+            clockOffsetSeconds: DaemonStatus.publishedOffset(trusted: result.trusted, wall: clock.wall, tampered: result.clockTampered),
+            clockTampered: result.clockTampered)
+        if status != lastSavedStatus {
+            ConfigFile.saveStatus(status)
+            lastSavedStatus = status
+        }
         if result.hostsChanged || !result.terminated.isEmpty || !result.killed.isEmpty {
-            log.info("tick: source=\(result.source) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count)")
+            log.info("tick: source=\(result.source.rawValue) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count)")
         }
         reschedule(interval: result.activeSet.bundleIDs.isEmpty ? Self.idleTick : Self.activeTick)
-        restartIfReplaced()
-    }
-
-    /// Exit so launchd (KeepAlive) starts the binary now on disk. One `stat` per tick. The new
-    /// file must look the same on two consecutive ticks, so a copy still in progress is not
-    /// launched half-written. A missing file (app deleted) is ignored: keep enforcing.
-    ///
-    /// Deliberately no `teardown()`: the hosts region stays in place across the restart and the
-    /// new process converges to it, so an update never opens an unblocked gap.
-    private func restartIfReplaced() {
-        guard timer != nil, let startIdentity, let now = FileIdentity(path: executablePath),
-              now != startIdentity else {
-            replacementSeen = nil
-            return
-        }
-        guard now == replacementSeen else {
-            replacementSeen = now
-            return
-        }
-        log.info("focusguardd executable was replaced; exiting so launchd starts the new version")
-        exit(0)
     }
 
     /// Wall-clock deadlines keep firing on schedule after sleep; a 2 s leeway still lets the kernel
@@ -107,7 +72,7 @@ final class Daemon {
     }
 
     func run() -> Never {
-        log.info("focusguardd \(Self.version) starting, tick \(Self.activeTick)s active / \(Self.idleTick)s idle")
+        log.info("focusguardd \(FocusGuardVersion.current) starting, tick \(Self.activeTick)s active / \(Self.idleTick)s idle")
 
         // launchd sends SIGTERM on bootout; strip our hosts region before exiting.
         for sig in [SIGTERM, SIGINT] {

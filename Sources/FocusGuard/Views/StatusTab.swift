@@ -1,5 +1,5 @@
+import FocusGuardCore
 import SwiftUI
-import ServiceManagement
 
 struct StatusTab: View {
     @Environment(AppModel.self) private var model
@@ -8,23 +8,13 @@ struct StatusTab: View {
     var body: some View {
         let inst = model.installer
         Form {
+            if model.daemonIsHolding || model.clockTampered { noticeSection }
+
             Section("Protection") {
-                if inst.legacyInstallPresent {
-                    row(done: false, "A manual daemon install is present",
-                        detail: "Run scripts/uninstall-daemon.sh in Terminal (needs sudo), then come back. The app installs the daemon from its own bundle under the same name.")
-                }
-                row(done: inst.inApplications, "FocusGuard is in /Applications",
-                    detail: inst.inApplications ? nil : "macOS only launches background daemons for apps installed there.") {
-                    if !inst.inApplications { Button("Move to Applications") { inst.moveToApplications() } }
-                }
                 daemonRow(inst)
-                row(done: inst.agentStatus == .enabled, "Starts at login and stays running",
-                    detail: inst.agentStatus == .enabled ? nil : "Status: \(inst.agentStatus.label)") {
-                    // The daemon row already offers this button while the daemon itself needs approval.
-                    if inst.agentStatus == .requiresApproval, inst.daemonStatus != .requiresApproval {
-                        Button("Open Login Items settings") { inst.openLoginItems() }
-                    }
-                }
+                Toggle("Open FocusGuard at login", isOn: Binding(get: { inst.opensAtLogin }, set: { inst.setOpensAtLogin($0) }))
+                Text("The background daemon blocks sites and apps whether or not this app is open. The app is where you edit lists and schedules; while it is open, blocked apps close instantly rather than within two seconds.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if let err = inst.lastError { Text(err).foregroundStyle(.red).font(.callout) }
             }
 
@@ -51,14 +41,15 @@ struct StatusTab: View {
                 if let err = model.saveError { Text(err).foregroundStyle(.red).font(.callout) }
             }
 
-            if inst.daemonStatus == .enabled || inst.daemonStatus == .requiresApproval {
+            if inst.daemonInstalled || inst.legacyDaemonRunning {
                 Section {
+                    let mode = model.uninstallMode
                     HStack {
-                        Button("Uninstall protection", role: .destructive) { model.requestUninstall() }
-                            .disabled(model.lockState.overall == .impossible)
-                        if model.lockState.overall == .impossible { LockBadge(until: model.lockState.lockedUntil) }
+                        Button("Uninstall protection…", role: .destructive) { model.requestUninstall() }
+                            .disabled(mode == .impossible || inst.working)
+                        if mode == .impossible { LockBadge(until: model.lockState.lockedUntil) }
                     }
-                    Text("Removes the daemon and login item. Your lists and schedule stay in config.json; the FocusGuard folder in /Library/Application Support remains (it is root-owned).")
+                    Text("Asks for your password, then removes the daemon and unblocks everything. Your lists and schedule stay in config.json.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -68,43 +59,63 @@ struct StatusTab: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in inst.refresh() }
     }
 
-    @ViewBuilder
-    private func daemonRow(_ inst: Installer) -> some View {
-        switch inst.daemonStatus {
-        case .enabled where inst.daemonIsStale:
-            row(done: false, "Background daemon is an older version",
-                detail: "FocusGuard was updated while it was running. Restarting takes a few seconds and needs no password.") {
-                Button(inst.restarting ? "Restarting…" : "Restart daemon") { inst.restartDaemon() }.disabled(inst.restarting)
+    /// Things the daemon is doing that the rest of the window would otherwise contradict.
+    private var noticeSection: some View {
+        Section {
+            if model.daemonIsHolding {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "lock.fill").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("A change is on hold")
+                        Text("config.json was changed in a way that would unblock something an Impossible window protects. The daemon is still enforcing the previous settings (shown here) and will take the change up when the window ends\(model.lockState.lockedUntil.map { " at \($0.string)" } ?? "").")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Discard the change") { model.discardRefusedChange() }
+                }
             }
-        case .enabled where inst.daemonRunningFromBundle:
-            if let proc = inst.daemonProcess {
-                row(done: true, "Background daemon running", detail: "pid \(proc.pid)")
-            } else {
-                row(done: true, "Background daemon running")
-            }
-        case .enabled:
-            row(done: false, "Daemon enabled but not running",
-                detail: inst.daemonProcess.map { "A focusguardd is running from \($0.path)" } ?? "launchd should start it within a few seconds; Re-install re-registers it if it does not.") {
-                Button("Re-install") { inst.install() }
-            }
-        case .requiresApproval:
-            row(done: false, "Approve FocusGuard in Login Items",
-                detail: "System Settings → General → Login Items & Extensions → Allow in the Background → FocusGuard.") {
-                Button("Open Login Items settings") { inst.openLoginItems() }
-            }
-        default:
-            row(done: false, "Background daemon not installed",
-                detail: "Registers focusguardd (root) and FocusGuard as a login item.") {
-                Button("Install protection") { inst.install() }.disabled(!inst.canInstall)
-                    .help(installHelp(inst))
+            if model.clockTampered {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("This Mac's clock was changed")
+                        Text("Schedules keep running on the real time (\(model.trustedNow.formatted(date: .omitted, time: .shortened))) until the clock agrees with it again.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
         }
     }
 
-    private func installHelp(_ inst: Installer) -> String {
-        if inst.legacyInstallPresent { return "Remove the manual daemon install first (scripts/uninstall-daemon.sh)" }
-        if !inst.inApplications { return "Move FocusGuard to /Applications first" }
-        return "Registers the daemon and login item"
+    @ViewBuilder
+    private func daemonRow(_ inst: Installer) -> some View {
+        if inst.working {
+            row(done: false, "Waiting for your password…")
+        } else if inst.legacyDaemonRunning {
+            row(done: false, "Protection needs reinstalling",
+                detail: "This version keeps the daemon in a system folder other programs cannot change. One password prompt; your settings are kept.") {
+                Button("Reinstall…") { inst.install() }
+            }
+        } else if !inst.daemonInstalled {
+            row(done: false, "Background daemon not installed",
+                detail: "Installs the root daemon that does the blocking. macOS asks for your password once.") {
+                Button("Install protection…") { inst.install() }
+            }
+        } else if inst.needsUpdate {
+            row(done: false, "Background daemon needs updating",
+                detail: "This app is newer than the installed daemon\(inst.status.map { " (\($0.version))" } ?? ""). Blocking continues meanwhile.") {
+                Button("Update…") { inst.install() }
+            }
+        } else if inst.daemonRunning {
+            row(done: true, "Background daemon running",
+                detail: [inst.status.map { "version \($0.version)" }, inst.daemonProcess.map { "pid \($0.pid)" }]
+                    .compactMap { $0 }.joined(separator: " · "))
+        } else {
+            row(done: false, "Background daemon installed but not running",
+                detail: "launchd normally restarts it within seconds. Reinstalling re-registers it.") {
+                Button("Reinstall…") { inst.install() }
+            }
+        }
     }
 
     private func row(done: Bool, _ title: String, detail: String? = nil) -> some View {
@@ -117,7 +128,7 @@ struct StatusTab: View {
                 .foregroundStyle(done ? .green : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                if let detail, !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary) }
             }
             Spacer()
             action()

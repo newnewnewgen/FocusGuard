@@ -40,6 +40,9 @@ struct AddAppSheet: View {
                 }
             }
             Divider()
+            Text("Blocked apps are quit the moment a window starts and whenever they are opened during it. Unsaved work in them is lost.")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding([.horizontal, .top])
             HStack {
                 TextField("Other bundle ID, e.g. com.example.app", text: $manualID).textFieldStyle(.roundedBorder)
                 Spacer()

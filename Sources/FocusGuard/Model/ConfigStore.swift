@@ -10,57 +10,70 @@ import FocusGuardCore
 final class ConfigStore {
     var onExternalChange: (() -> Void)?
 
+    private let configPath: String
+    private let supportDir: String
     private var source: DispatchSourceFileSystemObject?
     private var watchedPath: String?
-    /// Bytes of the last successful save, so the vnode event our own rename raises is not
-    /// reported as an external change.
-    private var lastWritten: Data?
+    /// Bytes of a save whose vnode event has not arrived yet, so that one event is not reported as
+    /// an external change. Cleared as soon as it has been matched: holding on to it would also
+    /// swallow a later external edit that happened to restore the same bytes.
+    private var pendingOwnWrite: Data?
 
-    private static let supportParent = (Paths.supportDir as NSString).deletingLastPathComponent
+    /// Paths are injectable for tests; the app uses the defaults.
+    init(configPath: String = Paths.config, supportDir: String = Paths.supportDir) {
+        self.configPath = configPath
+        self.supportDir = supportDir
+    }
 
-    var supportDirExists: Bool { FileManager.default.fileExists(atPath: Paths.supportDir) }
-    var configExists: Bool { FileManager.default.fileExists(atPath: Paths.config) }
+    private var supportParent: String { (supportDir as NSString).deletingLastPathComponent }
+
+    var supportDirExists: Bool { FileManager.default.fileExists(atPath: supportDir) }
+    var configExists: Bool { FileManager.default.fileExists(atPath: configPath) }
 
     deinit { source?.cancel() }
 
-    /// Missing file → empty config (fresh install). Malformed file → throws (caller shows it).
+    /// Missing file → empty config (fresh install). A file that exists but cannot be read, or
+    /// does not parse, throws: the caller disables editing, so a config we could not see is never
+    /// overwritten with an empty one.
     func load() throws -> Config {
         defer { watch() }
-        guard let data = FileManager.default.contents(atPath: Paths.config) else { return .empty }
+        guard configExists else { return .empty }
+        guard let data = FileManager.default.contents(atPath: configPath) else { throw StoreError.unreadable(configPath) }
         return try Config.decodeJSON(data)
     }
 
     func save(_ config: Config) throws {
         defer { watch() }
         let data = try config.encodeJSON()
-        let tmp = Paths.supportDir + "/.config.json.\(getpid()).tmp"
+        let tmp = supportDir + "/.config.json.\(getpid()).tmp"
         guard FileManager.default.createFile(atPath: tmp, contents: data, attributes: [.posixPermissions: 0o664]) else {
             unlink(tmp)
-            throw StoreError.cannotWrite(Paths.supportDir)
+            throw StoreError.cannotWrite(supportDir)
         }
-        guard rename(tmp, Paths.config) == 0 else {
+        guard rename(tmp, configPath) == 0 else {
             let code = errno
             unlink(tmp)
             throw StoreError.rename(String(cString: strerror(code)))
         }
-        lastWritten = data
+        pendingOwnWrite = data
     }
 
     enum StoreError: LocalizedError {
-        case cannotWrite(String), rename(String)
+        case cannotWrite(String), rename(String), unreadable(String)
         var errorDescription: String? {
             switch self {
             case .cannotWrite(let dir): return "Cannot write to \(dir). Install protection first (the daemon creates the folder), and make sure this user is an administrator."
             case .rename(let why): return "Could not replace config.json: \(why)"
+            case .unreadable(let path): return "\(path) exists but this user cannot read it."
             }
         }
     }
 
     /// Watch the file if it exists, else the support directory (to see the file appear), else
-    /// `/Library/Application Support` (always present) to see the daemon create the directory.
-    /// Each level up is re-watched one level down as soon as the next thing appears.
+    /// its parent (always present) to see the daemon create the directory. Each level up is
+    /// re-watched one level down as soon as the next thing appears.
     private func watch() {
-        let path = configExists ? Paths.config : (supportDirExists ? Paths.supportDir : Self.supportParent)
+        let path = configExists ? configPath : (supportDirExists ? supportDir : supportParent)
         guard path != watchedPath else { return }
         source?.cancel()
         source = nil
@@ -71,18 +84,26 @@ final class ConfigStore {
             fileDescriptor: fd, eventMask: [.write, .extend, .attrib, .delete, .rename], queue: .main)
         s.setEventHandler { [weak self] in
             guard let self else { return }
-            // After a rename/delete our fd points at the old inode; forget it so load() re-watches.
+            // After a rename/delete our fd points at the old inode; forget it so the next
+            // load()/watch() re-arms on whatever is at the path now.
             if s.data.contains(.delete) || s.data.contains(.rename) { self.watchedPath = nil }
-            // Our own save raises a rename on the old inode; the file now holds exactly what we
-            // wrote, so there is nothing to reload — just re-arm on the new inode.
-            if let last = self.lastWritten, FileManager.default.contents(atPath: Paths.config) == last {
-                self.watch()
-                return
-            }
-            self.onExternalChange?()
+            self.handleEvent()
         }
         s.setCancelHandler { close(fd) }
         s.resume()
         source = s
+    }
+
+    /// Our own save raises one event on the inode it replaced; the file then holds exactly what
+    /// we wrote and there is nothing to reload. Anything else is an external change.
+    private func handleEvent() {
+        if let own = pendingOwnWrite {
+            pendingOwnWrite = nil
+            if FileManager.default.contents(atPath: configPath) == own {
+                watch()
+                return
+            }
+        }
+        onExternalChange?()
     }
 }

@@ -47,4 +47,18 @@ public enum Challenge {
     public static func matches(typed: String, sentence: String) -> Bool {
         typed.trimmingCharacters(in: .whitespacesAndNewlines) == sentence
     }
+
+    /// True when `new` could have come from `old` by one keystroke: any range deleted (backspace,
+    /// or typing over a selection) and at most one character put in its place. Paste, drag-and-drop
+    /// and dictation insert several characters at once and fail this, including pasting over a
+    /// selection of the same length, which a simple "did it grow by more than one" check lets by.
+    public static func isSingleKeystroke(from old: String, to new: String) -> Bool {
+        let o = Array(old), n = Array(new)
+        var prefix = 0
+        while prefix < o.count, prefix < n.count, o[prefix] == n[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < o.count - prefix, suffix < n.count - prefix,
+              o[o.count - 1 - suffix] == n[n.count - 1 - suffix] { suffix += 1 }
+        return n.count - prefix - suffix <= 1
+    }
 }

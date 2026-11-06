@@ -11,10 +11,16 @@ struct PendingChallenge: Identifiable {
 }
 
 /// Hub for the UI: the config, what is active/locked right now, and the gate every weakening
-/// action goes through. Recomputes only on events (boundary, config change, wake, clock change).
+/// action goes through. Recomputes only on events (boundary, config change, daemon status
+/// change, wake, clock change).
+///
+/// The app is a convenience layer, not the enforcer. The root daemon blocks sites and apps and
+/// itself refuses changes that would break an Impossible window; this class mirrors the daemon's
+/// verdicts (its clock, what it is enforcing) so the UI agrees with it, and adds the Friction
+/// challenge on top.
 @MainActor @Observable
 final class AppModel {
-    static let log = Logger(subsystem: "com.focusguard", category: "app")
+    nonisolated static let log = Logger(subsystem: "com.focusguard", category: "app")
 
     private(set) var config: Config?
     private(set) var loadError: String?
@@ -23,6 +29,8 @@ final class AppModel {
     private(set) var lockState = LockState()
     private(set) var nextBoundary: Date?
     private(set) var nextWindowNames: [String] = []
+    /// The config the daemon has accepted (root-owned file, readable by us).
+    private(set) var enforced: Config?
 
     var pendingChallenge: PendingChallenge?
     var lockedMessage: String?
@@ -31,19 +39,31 @@ final class AppModel {
     let installer = Installer()
     private let clock = ScheduleClock()
     private var killer: AppKiller?
+    @ObservationIgnored private var statusWatcher: DirectoryWatcher?
 
     init() {
         killer = AppKiller { [weak self] in self?.activeSet.bundleIDs ?? [] }
         store.onExternalChange = { [weak self] in self?.reload() }
         clock.onFire = { [weak self] in self?.refresh() }
+        installer.refresh()
         reload()
-        // An app update replaces the daemon's binary under it. Daemons since 0.3.0 restart
-        // themselves; an older one is restarted here, once, when the updated app first launches.
-        DispatchQueue.main.async { [installer] in
-            Self.log.info("launched by \(ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] ?? "?", privacy: .public)")
-            installer.repairIfNeeded()
-        }
     }
+
+    // MARK: What the daemon says
+
+    /// The daemon's clock, which a change to the Mac's date, time or time zone does not move.
+    /// Lock decisions use this, so they agree with what the daemon will accept.
+    var trustedNow: Date { Date().addingTimeInterval(clockOffset) }
+    private var clockOffset: TimeInterval { TimeInterval(installer.status?.clockOffsetSeconds ?? 0) }
+    var clockTampered: Bool { installer.status?.clockTampered == true }
+
+    /// config.json holds a change the daemon is refusing until an Impossible window ends.
+    var daemonIsHolding: Bool { installer.status?.source == .held }
+
+    /// What is really in force when that is not config.json: a refused change, or a file we
+    /// cannot read while the daemon carries on with its accepted copy.
+    private var enforcedOverride: Config? { (daemonIsHolding || config == nil) ? enforced : nil }
+    private var effective: Config { enforcedOverride ?? config ?? .empty }
 
     // MARK: Derived state
 
@@ -53,8 +73,7 @@ final class AppModel {
 
     var isBlocking: Bool { lockState.overall != nil }
     var activeWindowNames: [String] {
-        guard let config else { return [] }
-        return config.schedules.filter { lockState.windowModes[$0.id] != nil }.map(\.name)
+        effective.schedules.filter { lockState.windowModes[$0.id] != nil }.map(\.name)
     }
     var lockedUntilText: String {
         lockState.lockedUntil.map { "Locked until \($0.string)" } ?? "Locked while a window is active"
@@ -70,24 +89,41 @@ final class AppModel {
             loadError = nil
         } catch {
             config = nil
-            loadError = "config.json is not valid: \(error.localizedDescription)"
+            loadError = "config.json could not be read: \(error.localizedDescription)"
         }
         refresh()
     }
 
     /// Recompute everything time-dependent and re-arm the single timer.
     func refresh() {
-        let now = Date()
+        watchDaemonStateIfPossible()
+        enforced = FileManager.default.contents(atPath: Paths.lastGood).flatMap { try? Config.decodeJSON($0) }
+        let now = trustedNow
         let moment = LocalMoment(date: now)
-        let cfg = config ?? .empty
+        let cfg = effective
         let wasBlocking = isBlocking
         activeSet = cfg.activeSet(at: moment)
         lockState = cfg.lockState(at: moment)
         nextBoundary = cfg.nextBoundary(after: now)
         nextWindowNames = nextBoundary.map { cfg.windows(startingAt: LocalMoment(date: $0)).map(\.name) } ?? []
-        clock.arm(at: nextBoundary)
+        // The boundary is on the daemon's timeline; the timer runs on the wall clock.
+        clock.arm(at: nextBoundary?.addingTimeInterval(-clockOffset))
         if !activeSet.bundleIDs.isEmpty { killer?.sweep() }
-        Self.log.info("refresh: blocking=\(self.isBlocking) was=\(wasBlocking) domains=\(self.activeSet.domains.count) apps=\(self.activeSet.bundleIDs.count) next=\(self.nextBoundary?.description ?? "none", privacy: .public)")
+        Self.log.info("refresh: blocking=\(self.isBlocking) was=\(wasBlocking) domains=\(self.activeSet.domains.count) apps=\(self.activeSet.bundleIDs.count) held=\(self.daemonIsHolding) next=\(self.nextBoundary?.description ?? "none", privacy: .public)")
+    }
+
+    /// The daemon rewrites status.json when its verdict changes (a refused config, a clock
+    /// change). The directory exists only once the daemon has run, so this is retried on refresh.
+    private func watchDaemonStateIfPossible() {
+        guard statusWatcher == nil else { return }
+        statusWatcher = DirectoryWatcher(path: Paths.stateDir) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let before = self.installer.status
+                self.installer.refreshStatus()
+                if self.installer.status != before { self.refresh() }
+            }
+        }
     }
 
     // MARK: Editing through the gate
@@ -97,26 +133,27 @@ final class AppModel {
     /// Apply `edit` to a copy of the config; save it now, after a challenge, or refuse, depending on
     /// the strictest unlock mode the edit cuts through. Views never mutate config directly.
     ///
-    /// The edit is re-applied to the *current* config when a challenge succeeds: a stricter window
-    /// may have started, or the file may have changed under us, while the sheet was open.
+    /// Weakening is judged against what the daemon is enforcing, at the daemon's time, so the
+    /// answer here matches the one the daemon will give. The edit is re-applied to the *current*
+    /// config when a challenge succeeds: a stricter window may have started, or the file may have
+    /// changed under us, while the sheet was open.
     @discardableResult
     func apply(_ edit: @escaping (inout Config) -> Void) -> Outcome {
         guard let old = config else { return .failed }
         var new = old
         edit(&new)
         guard new != old else { return .noChange }
-        // Both closures re-apply the edit to whatever the config is *when they run*. Immediately,
-        // that is `new`; after a challenge it is the edit on top of any change made meanwhile.
-        let fresh: () -> (current: Config, edited: Config)? = { [weak self] in
-            guard let current = self?.config else { return nil }
+        let fresh: () -> (baseline: Config, edited: Config)? = { [weak self] in
+            guard let self, let current = self.config else { return nil }
             var edited = current
             edit(&edited)
-            return (current, edited)
+            return (self.enforcedOverride ?? current, edited)
         }
-        return gate(new.weakens(from: old, at: LocalMoment(date: Date())), recheck: {
-            guard let (current, edited) = fresh() else { return .impossible }
-            return edited.weakens(from: current, at: LocalMoment(date: Date()))
-        }) { [weak self] in
+        let verdict: () -> UnlockMode? = { [weak self] in
+            guard let self, let (baseline, edited) = fresh() else { return .impossible }
+            return edited.weakens(from: baseline, at: LocalMoment(date: self.trustedNow))
+        }
+        return gate(verdict(), recheck: verdict) { [weak self] in
             if let (_, edited) = fresh() { self?.commit(edited) }
         }
     }
@@ -159,19 +196,24 @@ final class AppModel {
         }
     }
 
-    // MARK: Whole-app actions (gated by the strictest active mode)
+    /// Put config.json back to what the daemon is enforcing, dropping the change it refused.
+    /// Never a weakening, so it is not gated.
+    func discardRefusedChange() {
+        guard let enforced else { return }
+        commit(enforced)
+    }
 
-    /// Quit needs a window to show the challenge in when the mode is friction/impossible.
-    var quitNeedsSettingsWindow: Bool { (lockState.overall ?? .basic) > .basic }
+    // MARK: Whole-app actions
 
-    func requestQuit() {
-        gate(lockState.overall, recheck: { [weak self] in self?.lockState.overall }) { [installer] in
-            try? installer.unregisterAgent()   // otherwise KeepAlive relaunches us
-            NSApp.terminate(nil)
-        }
+    /// Removing the daemon removes every block, now and for as long as the current stretch of
+    /// windows would have run, so it is judged like deleting the whole configuration. The daemon
+    /// cannot refuse this one (the uninstaller runs as root, after a password); this is the
+    /// in-app guard.
+    var uninstallMode: UnlockMode? {
+        Config.empty.weakens(from: effective, at: LocalMoment(date: trustedNow))
     }
 
     func requestUninstall() {
-        gate(lockState.overall, recheck: { [weak self] in self?.lockState.overall }) { [installer] in installer.uninstall() }
+        gate(uninstallMode, recheck: { [weak self] in self?.uninstallMode }) { [installer] in installer.uninstall() }
     }
 }

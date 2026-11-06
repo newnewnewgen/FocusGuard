@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Type-the-sentence gate. The sentence is drawn on a Canvas (not selectable, no text layer to
 /// copy) with per-glyph jitter, mixed typefaces, strike lines and speckle so a screenshot is hard
-/// to OCR. The field refuses any change that adds more than one character, so paste and drag do
-/// nothing.
+/// to OCR. The field refuses any change that puts in more than one character at once, so paste
+/// and drag do nothing, with or without a selection to paste over.
 struct ChallengeSheet: View {
     let challenge: PendingChallenge
     let dismiss: () -> Void
@@ -41,7 +41,7 @@ struct ChallengeSheet: View {
                 .autocorrectionDisabled()
                 .focused($focused)
                 .onChange(of: typed) { old, new in
-                    if new.count > old.count + 1 {   // paste / drop / dictation burst
+                    if !Challenge.isSingleKeystroke(from: old, to: new) {   // paste / drop / dictation
                         typed = old
                         NSApp.keyWindow?.undoManager?.removeAllActions()   // ⌘Z must not bring it back
                     }

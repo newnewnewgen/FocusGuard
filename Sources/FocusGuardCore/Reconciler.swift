@@ -9,6 +9,10 @@ public final class Reconciler {
         public var hostsChanged: Bool
         public var terminated: [Int32]
         public var killed: [Int32]
+        /// The time schedule matching used this tick, and whether it differs from the wall clock
+        /// because the clock guard is overriding it. Published to the app in `DaemonStatus`.
+        public var trusted: Date
+        public var clockTampered: Bool
     }
 
     private let hosts: HostsFileStore
@@ -66,6 +70,7 @@ public final class Reconciler {
             case .live: log.info("config source: live")
             case .lastGood: log.error("config unreadable; enforcing last-known-good until its window ends")
             case .none: log.error("no readable config and no fallback; nothing is enforced")
+            case .held: log.error("config.json refused: it would unblock something an Impossible window protects; still enforcing the accepted config until that window ends")
             }
         }
         let active = config.activeSet(at: moment)
@@ -74,7 +79,8 @@ public final class Reconciler {
         let (terminated, killed) = reconcileApps(bundleIDs: active.bundleIDs, monotonic: clock.monotonic)
 
         return Result(activeSet: active, source: source, hostsChanged: hostsChanged,
-                      terminated: terminated, killed: killed)
+                      terminated: terminated, killed: killed,
+                      trusted: step.trusted, clockTampered: step.tampered)
     }
 
     /// Remove our hosts region. Called on daemon shutdown.

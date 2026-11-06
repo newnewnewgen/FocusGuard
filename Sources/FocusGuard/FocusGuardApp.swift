@@ -1,3 +1,4 @@
+import FocusGuardCore
 import SwiftUI
 
 @main
@@ -5,14 +6,10 @@ struct FocusGuardApp: App {
     @NSApplicationDelegateAdaptor(ReopenHandler.self) private var reopen
     @State private var model = AppModel()
     @State private var dock = DockFallback()
-    /// Decided once at launch: a fresh install opens the settings window by itself (a menu-bar-only
-    /// app whose icon sits behind the notch would otherwise give a first-time user nothing to
-    /// click). Once the daemon is enabled, launches are silent, as a login item should be.
-    private let installedAtLaunch: Bool = {
-        let installer = Installer()
-        installer.refresh()
-        return installer.daemonStatus == .enabled
-    }()
+    /// Decided once at launch: until protection is installed, a launch opens the settings window
+    /// by itself (nothing to click otherwise if the menu-bar icon is hidden). Once the daemon is
+    /// installed, launches are silent, as a login item should be.
+    private let installedAtLaunch = FileManager.default.fileExists(atPath: Paths.daemonPlist)
 
     var body: some Scene {
         settingsWindow

@@ -22,18 +22,12 @@ struct MenuView: View {
         if model.loadError != nil {
             Text("⚠︎ config.json is unreadable")
         }
+        if model.daemonIsHolding {
+            Text("⚠︎ A change is on hold until the lock ends")
+        }
         Divider()
         Button("Open Settings…") { FocusGuardApp.showSettings(openWindow) }.keyboardShortcut(",")
-        Button("Quit FocusGuard (and stop at login)") {
-            if model.quitNeedsSettingsWindow {
-                // The challenge sheet / locked alert attach to the settings window; let it exist
-                // (and be in front) before the gate presents them.
-                FocusGuardApp.showSettings(openWindow)
-                DispatchQueue.main.async { model.requestQuit() }
-            } else {
-                model.requestQuit()
-            }
-        }.keyboardShortcut("q")
+        Button("Quit FocusGuard") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 
     private var activeLine: String {
