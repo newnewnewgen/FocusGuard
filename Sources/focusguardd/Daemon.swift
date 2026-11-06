@@ -2,6 +2,9 @@ import Foundation
 import FocusGuardCore
 
 final class Daemon {
+    /// Keep in step with CFBundleShortVersionString; logged at start so "which code is running?"
+    /// can be answered from the log.
+    static let version = "0.3.0"
     /// While a window is active: fast sweep so a blocked app dies within ~2 s.
     static let activeTick: TimeInterval = 2
     /// Outside all windows: nothing to enforce, so wake rarely. A window boundary is therefore honoured within idleTick + leeway (32 s); the Plan 2 app tightens this with an exact timer.
@@ -104,7 +107,7 @@ final class Daemon {
     }
 
     func run() -> Never {
-        log.info("focusguardd starting, tick \(Self.activeTick)s active / \(Self.idleTick)s idle")
+        log.info("focusguardd \(Self.version) starting, tick \(Self.activeTick)s active / \(Self.idleTick)s idle")
 
         // launchd sends SIGTERM on bootout; strip our hosts region before exiting.
         for sig in [SIGTERM, SIGINT] {

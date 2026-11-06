@@ -40,8 +40,8 @@ final class AppModel {
         // An app update replaces the daemon's binary under it. Daemons since 0.3.0 restart
         // themselves; an older one is restarted here, once, when the updated app first launches.
         DispatchQueue.main.async { [installer] in
-            installer.refresh()
-            if installer.daemonIsStale { installer.restartDaemon() }
+            Self.log.info("launched by \(ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] ?? "?", privacy: .public)")
+            installer.repairIfNeeded()
         }
     }
 

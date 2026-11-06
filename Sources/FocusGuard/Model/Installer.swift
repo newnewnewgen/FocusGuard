@@ -35,10 +35,31 @@ final class Installer {
         AppModel.log.info("install status: daemon=\(self.daemonStatus.label, privacy: .public) agent=\(self.agentStatus.label, privacy: .public) process=\(self.daemonProcess?.path ?? "none", privacy: .public)")
     }
 
+    /// Set by Install, cleared by Uninstall: lets a later launch tell "the user removed protection"
+    /// from "protection should be there and is not" (a failed restart, a lost registration).
+    static let installedKey = "protectionInstalled"
+    private var wantsProtection: Bool {
+        // Installs made before this key existed are recognised by their enabled login item.
+        UserDefaults.standard.bool(forKey: Self.installedKey) || agentStatus == .enabled
+    }
+
+    /// Called once at launch. Restarts a daemon left running old code by an app update, and
+    /// re-registers a daemon that should be installed but is not.
+    func repairIfNeeded() {
+        refresh()
+        if daemonIsStale {
+            restartDaemon()
+        } else if daemonStatus == .notRegistered, wantsProtection, canInstall {
+            AppModel.log.info("daemon should be installed but is not registered; registering")
+            registerDaemonWithRetry(attemptsLeft: 2)
+        }
+    }
+
     /// Register both. The first daemon registration throws "Operation not permitted" while the
     /// status moves to requiresApproval — that is the normal path, not an error.
     func install() {
         lastError = nil
+        UserDefaults.standard.set(true, forKey: Self.installedKey)
         register(daemon, what: "daemon")
         register(agent, what: "login item")
         refresh()
@@ -49,9 +70,34 @@ final class Installer {
     private func register(_ service: SMAppService, what: String) {
         do {
             try service.register()
+            AppModel.log.info("register \(what, privacy: .public): ok, status=\(service.status.label, privacy: .public)")
         } catch {
+            AppModel.log.error("register \(what, privacy: .public): \(error.localizedDescription, privacy: .public), status=\(service.status.label, privacy: .public)")
             if service.status != .requiresApproval && service.status != .enabled {
                 lastError = "Could not register \(what): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// `unregister`'s completion handler fires before launchd has finished removing the job, and a
+    /// register that lands in that gap is silently lost (observed: the item is found "enabled",
+    /// then the job disappears). So: wait, register, and check that it stuck.
+    private func registerDaemonWithRetry(attemptsLeft: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            self.register(self.daemon, what: "daemon")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self else { return }
+                self.refresh()
+                let settled = self.daemonStatus == .requiresApproval
+                    || (self.daemonStatus == .enabled && self.daemonProcess != nil)
+                if settled || attemptsLeft <= 1 {
+                    self.restarting = false
+                    if !settled { self.lastError = "The daemon did not start. Use Re-install, or Install protection, below." }
+                } else {
+                    AppModel.log.info("daemon not running after register; retrying")
+                    self.registerDaemonWithRetry(attemptsLeft: attemptsLeft - 1)
+                }
             }
         }
     }
@@ -70,16 +116,15 @@ final class Installer {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let error { AppModel.log.error("daemon unregister: \(error.localizedDescription, privacy: .public)") }
-                self.register(self.daemon, what: "daemon")
-                self.restarting = false
                 self.refresh()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refresh() }
+                self.registerDaemonWithRetry(attemptsLeft: 2)
             }
         }
     }
 
     func uninstall() {
         lastError = nil
+        UserDefaults.standard.set(false, forKey: Self.installedKey)
         do { try daemon.unregister() } catch { lastError = "Could not remove daemon: \(error.localizedDescription)" }
         try? agent.unregister()
         refresh()
