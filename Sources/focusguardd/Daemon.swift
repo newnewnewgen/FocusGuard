@@ -16,6 +16,7 @@ final class Daemon {
     private var lastSavedLastGood: Config?
     private var lastSavedClockState: ClockGuard.State?
     private var lastSavedStatus: DaemonStatus?
+    private var lastSavedZone: String?
 
     init() {
         do {
@@ -25,23 +26,29 @@ final class Daemon {
         }
         lastSavedClockState = ConfigFile.loadClockState()
         lastSavedLastGood = ConfigFile.loadLastGood()
+        lastSavedZone = ConfigFile.loadTimeZone()
         reconciler = Reconciler(
             hosts: EtcHostsStore(path: Paths.hosts),
             dns: DSCacheFlusher(),
             processes: LibprocProcessController(),
             log: log,
             clockState: lastSavedClockState,
-            resolver: ConfigResolver(lastGood: lastSavedLastGood))
+            resolver: ConfigResolver(lastGood: lastSavedLastGood),
+            zone: lastSavedZone.flatMap(TimeZone.init(identifier:)))
     }
 
     /// One reconcile pass. Safe to call from `once` or from the timer.
     func tick() {
         let live = ConfigFile.load(log: log)
         let clock = SystemClock.sample()
-        let result = reconciler.tick(live: live, clock: clock)
-        if let good = reconciler.lastGoodConfig, good != lastSavedLastGood {
-            ConfigFile.saveLastGood(good)
+        // Foundation caches the system zone for the life of the process unless told to look again.
+        NSTimeZone.resetSystemTimeZone()
+        let result = reconciler.tick(live: live, clock: clock, systemZone: NSTimeZone.system)
+        if let good = reconciler.lastGoodConfig, good != lastSavedLastGood, ConfigFile.saveLastGood(good) {
             lastSavedLastGood = good
+        }
+        if result.timeZone != lastSavedZone, ConfigFile.saveTimeZone(result.timeZone) {
+            lastSavedZone = result.timeZone
         }
         // The anchor changes rarely (first run, reboot, 24 h reconverge), so this almost never writes.
         if let state = reconciler.clockState, state != lastSavedClockState {
@@ -52,9 +59,8 @@ final class Daemon {
         let status = DaemonStatus(
             pid: getpid(), source: result.source,
             clockOffsetSeconds: DaemonStatus.publishedOffset(trusted: result.trusted, wall: clock.wall, tampered: result.clockTampered),
-            clockTampered: result.clockTampered)
-        if status != lastSavedStatus {
-            ConfigFile.saveStatus(status)
+            clockTampered: result.clockTampered, timeZone: result.timeZone)
+        if status != lastSavedStatus, ConfigFile.saveStatus(status) {
             lastSavedStatus = status
         }
         if result.hostsChanged || !result.terminated.isEmpty || !result.killed.isEmpty {

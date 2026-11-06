@@ -19,6 +19,8 @@ public enum Paths {
     public static let clockState = stateDir + "/clock-state.json"
     /// `DaemonStatus`, 0644.
     public static let status = stateDir + "/status.json"
+    /// Identifier of the time zone the daemon is reading the schedule in, 0644.
+    public static let timeZone = stateDir + "/time-zone"
     /// Where state lived before 0.4.0, inside the user-writable support dir; migrated once.
     public static let legacyStateDir = supportDir + "/state"
 

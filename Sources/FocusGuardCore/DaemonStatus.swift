@@ -18,14 +18,18 @@ public struct DaemonStatus: Codable, Equatable {
     /// changed; the app adds it to `Date()` so its lock decisions agree with the daemon's.
     public var clockOffsetSeconds: Int
     public var clockTampered: Bool
+    /// The time zone the daemon reads the schedule in. Normally the Mac's; during an Impossible
+    /// window a change of zone is held back, and the app must use this one to agree.
+    public var timeZone: String
 
     public init(version: String = FocusGuardVersion.current, pid: Int32, source: ConfigResolver.Source,
-                clockOffsetSeconds: Int, clockTampered: Bool) {
+                clockOffsetSeconds: Int, clockTampered: Bool, timeZone: String) {
         self.version = version
         self.pid = pid
         self.source = source
         self.clockOffsetSeconds = clockOffsetSeconds
         self.clockTampered = clockTampered
+        self.timeZone = timeZone
     }
 
     /// Offset to publish: nothing while the clocks agree (the small drift inside the guard's

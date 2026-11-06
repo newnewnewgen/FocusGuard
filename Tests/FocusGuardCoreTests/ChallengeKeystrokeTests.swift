@@ -58,7 +58,7 @@ final class DaemonStatusTests: XCTestCase {
     }
 
     func testRoundTripsThroughJSON() throws {
-        let status = DaemonStatus(pid: 42, source: .held, clockOffsetSeconds: -7200, clockTampered: true)
+        let status = DaemonStatus(pid: 42, source: .held, clockOffsetSeconds: -7200, clockTampered: true, timeZone: "America/Vancouver")
         let data = try JSONEncoder().encode(status)
         XCTAssertEqual(try JSONDecoder().decode(DaemonStatus.self, from: data), status)
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"held\""))

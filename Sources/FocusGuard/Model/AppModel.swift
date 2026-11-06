@@ -51,19 +51,45 @@ final class AppModel {
 
     // MARK: What the daemon says
 
-    /// The daemon's clock, which a change to the Mac's date, time or time zone does not move.
-    /// Lock decisions use this, so they agree with what the daemon will accept.
+    /// The daemon's clock, which a change to the Mac's date or time does not move. Lock
+    /// decisions use this, so they agree with what the daemon will accept.
     var trustedNow: Date { Date().addingTimeInterval(clockOffset) }
     private var clockOffset: TimeInterval { TimeInterval(installer.status?.clockOffsetSeconds ?? 0) }
     var clockTampered: Bool { installer.status?.clockTampered == true }
 
-    /// config.json holds a change the daemon is refusing until an Impossible window ends.
-    var daemonIsHolding: Bool { installer.status?.source == .held }
+    /// Schedule times are read in the daemon's time zone. That is the Mac's, except that the
+    /// daemon does not follow a zone change while an Impossible window is active.
+    private var daemonCalendar: Calendar {
+        var calendar = Calendar.current
+        if let id = installer.status?.timeZone, let zone = TimeZone(identifier: id) { calendar.timeZone = zone }
+        return calendar
+    }
+    var zoneHeldBack: String? {
+        guard let id = installer.status?.timeZone, id != TimeZone.current.identifier else { return nil }
+        return id
+    }
+    private var trustedMoment: LocalMoment { LocalMoment(date: trustedNow, calendar: daemonCalendar) }
+
+    /// config.json holds a change the daemon is refusing (or, within its next tick, will refuse)
+    /// until an Impossible window ends. Predicted here as well as read from the daemon so the
+    /// window says so at once instead of up to 30 s later.
+    var daemonIsHolding: Bool {
+        if installer.status?.source == .held { return true }
+        guard installer.status != nil, let config, let enforced, config != enforced else { return false }
+        return config.weakens(from: enforced, at: trustedMoment) == .impossible
+    }
 
     /// What is really in force when that is not config.json: a refused change, or a file we
     /// cannot read while the daemon carries on with its accepted copy.
-    private var enforcedOverride: Config? { (daemonIsHolding || config == nil) ? enforced : nil }
+    private var enforcedOverride: Config? {
+        if daemonIsHolding { return enforced }
+        if config == nil, installer.status?.source == .lastGood { return enforced }
+        return nil
+    }
     private var effective: Config { enforcedOverride ?? config ?? .empty }
+
+    /// config.json cannot be read and the daemon has a copy we could put back.
+    var canRestoreConfig: Bool { config == nil && enforced != nil }
 
     // MARK: Derived state
 
@@ -99,13 +125,14 @@ final class AppModel {
         watchDaemonStateIfPossible()
         enforced = FileManager.default.contents(atPath: Paths.lastGood).flatMap { try? Config.decodeJSON($0) }
         let now = trustedNow
-        let moment = LocalMoment(date: now)
+        let calendar = daemonCalendar
+        let moment = LocalMoment(date: now, calendar: calendar)
         let cfg = effective
         let wasBlocking = isBlocking
         activeSet = cfg.activeSet(at: moment)
         lockState = cfg.lockState(at: moment)
-        nextBoundary = cfg.nextBoundary(after: now)
-        nextWindowNames = nextBoundary.map { cfg.windows(startingAt: LocalMoment(date: $0)).map(\.name) } ?? []
+        nextBoundary = cfg.nextBoundary(after: now, calendar: calendar)
+        nextWindowNames = nextBoundary.map { cfg.windows(startingAt: LocalMoment(date: $0, calendar: calendar)).map(\.name) } ?? []
         // The boundary is on the daemon's timeline; the timer runs on the wall clock.
         clock.arm(at: nextBoundary?.addingTimeInterval(-clockOffset))
         if !activeSet.bundleIDs.isEmpty { killer?.sweep() }
@@ -151,7 +178,7 @@ final class AppModel {
         }
         let verdict: () -> UnlockMode? = { [weak self] in
             guard let self, let (baseline, edited) = fresh() else { return .impossible }
-            return edited.weakens(from: baseline, at: LocalMoment(date: self.trustedNow))
+            return edited.weakens(from: baseline, at: self.trustedMoment)
         }
         return gate(verdict(), recheck: verdict) { [weak self] in
             if let (_, edited) = fresh() { self?.commit(edited) }
@@ -196,11 +223,12 @@ final class AppModel {
         }
     }
 
-    /// Put config.json back to what the daemon is enforcing, dropping the change it refused.
-    /// Never a weakening, so it is not gated.
-    func discardRefusedChange() {
+    /// Put config.json back to what the daemon is enforcing: drops a change it refused, or
+    /// replaces a file that can no longer be read. Never a weakening, so it is not gated.
+    func restoreEnforcedConfig() {
         guard let enforced else { return }
         commit(enforced)
+        if saveError == nil { loadError = nil }
     }
 
     // MARK: Whole-app actions
@@ -210,7 +238,7 @@ final class AppModel {
     /// cannot refuse this one (the uninstaller runs as root, after a password); this is the
     /// in-app guard.
     var uninstallMode: UnlockMode? {
-        Config.empty.weakens(from: effective, at: LocalMoment(date: trustedNow))
+        Config.empty.weakens(from: effective, at: trustedMoment)
     }
 
     func requestUninstall() {

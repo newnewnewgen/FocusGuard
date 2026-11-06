@@ -13,6 +13,8 @@ public final class Reconciler {
         /// because the clock guard is overriding it. Published to the app in `DaemonStatus`.
         public var trusted: Date
         public var clockTampered: Bool
+        /// The zone schedule matching used: the system's, unless a change is being held back.
+        public var timeZone: String
     }
 
     private let hosts: HostsFileStore
@@ -21,7 +23,12 @@ public final class Reconciler {
     private let log: ReconcilerLog
     private let clockGuard: ClockGuard
     private let killGrace: TimeInterval
-    private let calendar: Calendar
+    /// Schedule times are local times in this calendar's zone. The zone follows the system's,
+    /// except that a change is not taken up while an Impossible window is active: `Date` does
+    /// not move when the zone does, so the clock guard cannot see it, and without this a zone
+    /// change would slide the window out from under the present moment.
+    private var calendar: Calendar
+    private var refusedZone: String?
 
     private var resolver: ConfigResolver
     /// Persisted by the daemon so a restart within the same boot cannot reset the clock anchor.
@@ -35,7 +42,8 @@ public final class Reconciler {
     public init(hosts: HostsFileStore, dns: DNSCacheFlusher, processes: ProcessController, log: ReconcilerLog,
                 clockGuard: ClockGuard = ClockGuard(), clockState: ClockGuard.State? = nil,
                 killGrace: TimeInterval = 3,
-                resolver: ConfigResolver = ConfigResolver(), calendar: Calendar = .current) {
+                resolver: ConfigResolver = ConfigResolver(), calendar: Calendar = .current,
+                zone: TimeZone? = nil) {
         self.hosts = hosts
         self.dns = dns
         self.processes = processes
@@ -45,12 +53,16 @@ public final class Reconciler {
         self.killGrace = killGrace
         self.resolver = resolver
         self.calendar = calendar
+        if let zone { self.calendar.timeZone = zone }
     }
 
     public var lastGoodConfig: Config? { resolver.lastGood }
+    /// Persisted by the daemon so a restart cannot be used to adopt a zone change mid-window.
+    public var timeZoneIdentifier: String { calendar.timeZone.identifier }
 
+    /// `systemZone` is the Mac's current time zone as read this tick (nil: keep the zone we have).
     @discardableResult
-    public func tick(live: Config?, clock: ClockSample) -> Result {
+    public func tick(live: Config?, clock: ClockSample, systemZone: TimeZone? = nil) -> Result {
         let step = clockGuard.step(state: clockState, now: clock)
         clockState = step.state
         if step.tampered != wasTampered {
@@ -62,6 +74,7 @@ public final class Reconciler {
             }
         }
 
+        adoptZoneIfAllowed(systemZone, trusted: step.trusted)
         let moment = LocalMoment(date: step.trusted, calendar: calendar)
         let (config, source) = resolver.resolve(live: live, at: moment, monotonic: clock.monotonic)
         if source != lastSource {
@@ -80,7 +93,25 @@ public final class Reconciler {
 
         return Result(activeSet: active, source: source, hostsChanged: hostsChanged,
                       terminated: terminated, killed: killed,
-                      trusted: step.trusted, clockTampered: step.tampered)
+                      trusted: step.trusted, clockTampered: step.tampered,
+                      timeZone: calendar.timeZone.identifier)
+    }
+
+    private func adoptZoneIfAllowed(_ systemZone: TimeZone?, trusted: Date) {
+        guard let systemZone, systemZone.identifier != calendar.timeZone.identifier else {
+            refusedZone = nil
+            return
+        }
+        if resolver.isImpossibleLocked(at: LocalMoment(date: trusted, calendar: calendar)) {
+            if refusedZone != systemZone.identifier {
+                refusedZone = systemZone.identifier
+                log.error("time zone changed to \(systemZone.identifier); keeping \(calendar.timeZone.identifier) until the Impossible window ends")
+            }
+        } else {
+            log.info("time zone is now \(systemZone.identifier) (was \(calendar.timeZone.identifier))")
+            calendar.timeZone = systemZone
+            refusedZone = nil
+        }
     }
 
     /// Remove our hosts region. Called on daemon shutdown.

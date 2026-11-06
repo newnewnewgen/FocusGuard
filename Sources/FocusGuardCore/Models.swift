@@ -168,7 +168,47 @@ public struct Config: Codable, Equatable {
         return try enc.encode(self)
     }
 
+    /// Decodes and validates. Anything that fails here is, to the daemon, an unreadable file:
+    /// it carries on with the config it had accepted.
     public static func decodeJSON(_ data: Data) throws -> Config {
-        try JSONDecoder().decode(Config.self, from: data)
+        guard data.count <= Limits.maxBytes else { throw ValidationError.tooLarge("file is \(data.count) bytes; the limit is \(Limits.maxBytes)") }
+        let config = try JSONDecoder().decode(Config.self, from: data)
+        try config.validate()
+        return config
+    }
+
+    /// Far above anything a person would set up, and low enough that the daemon judges any
+    /// allowed config in well under a second. Without them a crafted config.json could keep the
+    /// daemon's only thread busy for minutes, during which it kills no apps.
+    public enum Limits {
+        public static let maxBytes = 512 * 1024
+        public static let maxWindows = 48
+        public static let maxLists = 32
+        /// Across all lists.
+        public static let maxDomains = 2000
+        public static let maxApps = 300
+    }
+
+    public enum ValidationError: LocalizedError, Equatable {
+        case tooLarge(String), duplicateID(String)
+        public var errorDescription: String? {
+            switch self {
+            case .tooLarge(let what): return "Config too large: \(what)."
+            case .duplicateID(let what): return "Two \(what) share one id."
+            }
+        }
+    }
+
+    /// IDs must be unique: with two windows sharing an ID, "is this window still protecting its
+    /// items?" has no single answer, which was once enough to slip a weakening past the lock.
+    public func validate() throws {
+        guard schedules.count <= Limits.maxWindows else { throw ValidationError.tooLarge("\(schedules.count) windows; the limit is \(Limits.maxWindows)") }
+        guard blockLists.count <= Limits.maxLists else { throw ValidationError.tooLarge("\(blockLists.count) lists; the limit is \(Limits.maxLists)") }
+        let domains = blockLists.reduce(0) { $0 + $1.domains.count }
+        guard domains <= Limits.maxDomains else { throw ValidationError.tooLarge("\(domains) sites; the limit is \(Limits.maxDomains)") }
+        let apps = blockLists.reduce(0) { $0 + $1.appBundleIDs.count }
+        guard apps <= Limits.maxApps else { throw ValidationError.tooLarge("\(apps) apps; the limit is \(Limits.maxApps)") }
+        guard Set(schedules.map(\.id)).count == schedules.count else { throw ValidationError.duplicateID("windows") }
+        guard Set(blockLists.map(\.id)).count == blockLists.count else { throw ValidationError.duplicateID("lists") }
     }
 }

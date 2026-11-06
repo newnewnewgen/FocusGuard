@@ -8,7 +8,7 @@ struct StatusTab: View {
     var body: some View {
         let inst = model.installer
         Form {
-            if model.daemonIsHolding || model.clockTampered { noticeSection }
+            if model.daemonIsHolding || model.clockTampered || model.zoneHeldBack != nil || model.canRestoreConfig { noticeSection }
 
             Section("Protection") {
                 daemonRow(inst)
@@ -71,7 +71,29 @@ struct StatusTab: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Discard the change") { model.discardRefusedChange() }
+                    Button("Discard the change") { model.restoreEnforcedConfig() }
+                }
+            }
+            if model.canRestoreConfig {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("config.json cannot be read")
+                        Text("Lists and schedules cannot be edited until it can. The daemon has a copy of the last settings it accepted; restoring writes that copy back.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Restore") { model.restoreEnforcedConfig() }
+                }
+            }
+            if let zone = model.zoneHeldBack {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "globe").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Time zone change on hold")
+                        Text("Schedules are still read in \(zone) until the Impossible window ends.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             if model.clockTampered {

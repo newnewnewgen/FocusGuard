@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import FocusGuardCore
 import Observation
 import ServiceManagement
@@ -50,9 +51,14 @@ final class Installer {
     /// Only the cheap part: called whenever the daemon rewrites status.json.
     func refreshStatus() { status = Self.readStatus() }
 
+    /// nil unless the process that wrote it is still alive: a status left behind by a daemon
+    /// that died (or was uninstalled by hand) must not keep steering the app's clock and locks.
     private static func readStatus() -> DaemonStatus? {
-        guard let data = FileManager.default.contents(atPath: Paths.status) else { return nil }
-        return try? JSONDecoder().decode(DaemonStatus.self, from: data)
+        guard let data = FileManager.default.contents(atPath: Paths.status),
+              let status = try? JSONDecoder().decode(DaemonStatus.self, from: data) else { return nil }
+        // Signal 0 only tests for existence; EPERM means "exists, owned by someone else" (root).
+        let alive = kill(status.pid, 0) == 0 || errno == EPERM
+        return alive ? status : nil
     }
 
     // MARK: Daemon
@@ -156,7 +162,17 @@ final class Installer {
             }
         }
         group.notify(queue: .main) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { next() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                // Do not install on top of a registration that is still there: both would claim
+                // the label at the next boot, one of them pointing into the app bundle.
+                let stuck = legacy.filter { $0.status == .enabled || $0.status == .requiresApproval }
+                if stuck.isEmpty {
+                    next()
+                } else {
+                    AppModel.log.error("\(stuck.count) legacy registration(s) could not be removed")
+                    self?.lastError = "Could not remove the old FocusGuard background item. In System Settings → General → Login Items & Extensions, turn FocusGuard off under “Allow in the Background”, then try again."
+                }
+            }
         }
     }
 }

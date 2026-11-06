@@ -6,16 +6,19 @@ import Foundation
 /// **Impossible windows are enforced here, not just in the app.** A proposal that would unblock
 /// anything an active Impossible window protects (`weakens(from:at:)`, judged at the daemon's
 /// tamper-resistant time) is refused: the accepted config stays in force and the proposal is
-/// re-examined every tick, so it is taken up by itself once the window has ended. Editing or
-/// deleting the file, or changing the clock, therefore does not get around the lock. Friction
-/// and Basic are speed bumps in the app only; the daemon accepts those changes.
+/// re-examined, so it is taken up by itself once the window has ended. A file that is missing,
+/// unreadable or invalid is judged as what it amounts to — a proposal to block nothing — and
+/// refused on the same terms, today or in any later week. Editing, corrupting or deleting the
+/// file, or changing the clock, therefore does not get around the lock. The way to drop an
+/// Impossible schedule is to save a valid config while none of its windows is active.
+/// Friction and Basic are speed bumps in the app only; the daemon accepts those changes.
 ///
-/// **Unreadable config is bounded fail-closed.** Keep enforcing the accepted config, but only
-/// while one of the windows that was active *when the live config vanished* is still active, and
-/// (unless one of those is Impossible) never longer than `maxFallback`. After that the fallback
-/// is released for the rest of this daemon's lifetime, until a config is read again. A daemon
-/// restart re-arms it from the persisted copy — deliberately fail-closed after a reboot. A bug
-/// can never lock the user out for more than `maxFallback` without a restart, and the README
+/// **Otherwise an unreadable config is bounded fail-closed.** Keep enforcing the accepted config,
+/// but only while one of the windows that was active *when the file vanished* is still active,
+/// and never longer than `maxFallback`. After that the fallback is released for the rest of
+/// this daemon's lifetime, until a config is read again. A daemon restart re-arms it from the
+/// persisted copy — deliberately fail-closed after a reboot. Short of an Impossible window, a
+/// bug can never lock the user out for more than `maxFallback` without a restart, and the README
 /// documents `launchctl bootout` as the escape hatch.
 public struct ConfigResolver {
     public enum Source: String, Equatable {
@@ -37,9 +40,32 @@ public struct ConfigResolver {
     private var fallbackWindowIDs: Set<UUID>?
     private var fallbackSince: TimeInterval?
 
+    /// The last judgement, reused while the proposal and the minute are unchanged: a refused
+    /// proposal sits in the file for the rest of the window and would otherwise be re-judged on
+    /// every 2 s tick. A different proposal, a different minute or a new accepted config misses.
+    private var cachedVerdict: (proposal: Config, moment: LocalMoment, verdict: UnlockMode?)?
+    /// How many judgements were actually computed (for tests).
+    public private(set) var verdictsComputed = 0
+
     public init(lastGood: Config? = nil, maxFallback: TimeInterval = 24 * 3600) {
         self.lastGood = lastGood
         self.maxFallback = maxFallback
+    }
+
+    /// Would taking up `proposal` in place of the accepted config break an Impossible window?
+    private mutating func breaksImpossible(_ proposal: Config, at moment: LocalMoment) -> Bool {
+        guard let accepted = lastGood, proposal != accepted else { return false }
+        if let c = cachedVerdict, c.moment == moment, c.proposal == proposal { return c.verdict == .impossible }
+        let verdict = proposal.weakens(from: accepted, at: moment)
+        verdictsComputed += 1
+        cachedVerdict = (proposal, moment, verdict)
+        return verdict == .impossible
+    }
+
+    /// Is the accepted config inside an Impossible stretch right now? The daemon also uses this
+    /// to decide whether a change of time zone may take effect yet.
+    public mutating func isImpossibleLocked(at moment: LocalMoment) -> Bool {
+        breaksImpossible(.empty, at: moment)
     }
 
     public mutating func resolve(live: Config?, at moment: LocalMoment, monotonic: TimeInterval) -> (config: Config, source: Source) {
@@ -47,26 +73,32 @@ public struct ConfigResolver {
             fallbackReleased = false
             fallbackWindowIDs = nil
             fallbackSince = nil
-            if let accepted = lastGood, live != accepted,
-               live.weakens(from: accepted, at: moment) == .impossible {
+            if breaksImpossible(live, at: moment), let accepted = lastGood {
                 return (accepted, .held)
             }
-            lastGood = live
+            if live != lastGood {
+                lastGood = live
+                cachedVerdict = nil
+            }
             return (live, .live)
         }
-        guard let lastGood, !fallbackReleased else { return (.empty, .none) }
+        guard let lastGood else { return (.empty, .none) }
 
-        if fallbackWindowIDs == nil {
+        if fallbackWindowIDs == nil, !fallbackReleased {
             fallbackWindowIDs = Set(lastGood.schedules.filter { $0.isActive(at: moment) }.map(\.id))
             fallbackSince = monotonic
         }
+        // No file is a proposal to block nothing; an Impossible window refuses that outright,
+        // whatever the softer bookkeeping below has concluded.
+        if breaksImpossible(.empty, at: moment) { return (lastGood, .lastGood) }
+        if fallbackReleased { return (.empty, .none) }
+
         let ids = fallbackWindowIDs ?? []
         let since = fallbackSince ?? monotonic
-        let stillActive = lastGood.schedules.filter { ids.contains($0.id) && $0.isActive(at: moment) }
-        // Deleting the file must not outlast an Impossible window either, however long it runs.
-        let expired = monotonic - since >= maxFallback && !stillActive.contains { $0.unlockMode == .impossible }
+        let stillActive = lastGood.schedules.contains { ids.contains($0.id) && $0.isActive(at: moment) }
+        let expired = monotonic - since >= maxFallback
 
-        if stillActive.isEmpty || expired {
+        if !stillActive || expired {
             fallbackReleased = true
             fallbackWindowIDs = nil
             fallbackSince = nil

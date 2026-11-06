@@ -6,7 +6,24 @@ import FocusGuardCore
 /// executable path to the bundle ID of the innermost `.app` containing it, so a helper like
 /// `Slack.app/Contents/Frameworks/Slack Helper.app/...` reports the helper's own ID.
 final class LibprocProcessController: ProcessController {
-    private var bundleIDCache: [String: String?] = [:]
+    /// Bundle path → the Info.plist it was read from and the ID found. Re-read when the plist's
+    /// inode or modification time changes, so putting a different app at a path already seen (to
+    /// borrow its cached "not blocked" answer) does not work. Costs one `stat` per app process.
+    private var bundleIDCache: [String: (plist: PlistIdentity?, id: String?)] = [:]
+
+    private struct PlistIdentity: Equatable {
+        let inode: UInt64
+        let modifiedSeconds: Int
+        let modifiedNanos: Int
+
+        init?(bundlePath: String) {
+            var st = stat()
+            guard stat(bundlePath + "/Contents/Info.plist", &st) == 0 else { return nil }
+            inode = UInt64(st.st_ino)
+            modifiedSeconds = Int(st.st_mtimespec.tv_sec)
+            modifiedNanos = Int(st.st_mtimespec.tv_nsec)
+        }
+    }
 
     func runningApps() -> [RunningApp] {
         let count = proc_listallpids(nil, 0)
@@ -34,9 +51,11 @@ final class LibprocProcessController: ProcessController {
     private func bundleID(forExecutablePath path: String) -> String? {
         guard let r = path.range(of: ".app/", options: .backwards) else { return nil }
         let bundlePath = String(path[..<r.lowerBound]) + ".app"
-        if let cached = bundleIDCache[bundlePath] { return cached }
-        let id = Bundle(path: bundlePath)?.bundleIdentifier
-        bundleIDCache[bundlePath] = id
+        let plist = PlistIdentity(bundlePath: bundlePath)
+        if let cached = bundleIDCache[bundlePath], cached.plist == plist { return cached.id }
+        // Read the plist directly: `Bundle(path:)` keeps its own per-process cache of the bundle.
+        let id = (NSDictionary(contentsOfFile: bundlePath + "/Contents/Info.plist")?["CFBundleIdentifier"] as? String)
+        bundleIDCache[bundlePath] = (plist, id)
         return id
     }
 }
