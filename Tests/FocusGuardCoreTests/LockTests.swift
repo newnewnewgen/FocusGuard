@@ -211,16 +211,25 @@ final class LockTests: XCTestCase {
         var new1 = old
         new1.blockLists[1].domains.removeFirst()  // list 1 is covered by b at .friction
 
-        let t = Date()
         XCTAssertEqual(new.weakens(from: old, at: mon10), .basic)
-        let elapsed = Date().timeIntervalSince(t)
+        let elapsed = Self.bestCPUSeconds { _ = new.weakens(from: old, at: self.mon10) }
         XCTAssertLessThan(elapsed, 0.05, "weakens took \(elapsed) s")
         XCTAssertEqual(new1.weakens(from: old, at: mon10), .friction)
 
-        let t2 = Date()
         let s = old.lockState(at: mon10)
-        XCTAssertLessThan(Date().timeIntervalSince(t2), 0.05)
+        let elapsed2 = Self.bestCPUSeconds { _ = old.lockState(at: self.mon10) }
+        XCTAssertLessThan(elapsed2, 0.05, "lockState took \(elapsed2) s")
         XCTAssertEqual(s.overall, .impossible)
         XCTAssertEqual(s.lockedUntil, TimeOfDay("23:59")!)
+    }
+
+    /// Fastest of `runs` executions, in CPU seconds of this thread. Wall time (`Date()`) on a single
+    /// run also counts time spent preempted, which made this test fail on a busy machine.
+    private static func bestCPUSeconds(runs: Int = 5, _ body: () -> Void) -> Double {
+        (0..<runs).map { _ in
+            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            body()
+            return Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1e9
+        }.min()!
     }
 }
