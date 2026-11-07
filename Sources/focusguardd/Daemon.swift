@@ -17,6 +17,8 @@ final class Daemon {
     private var lastSavedClockState: ClockGuard.State?
     private var lastSavedStatus: DaemonStatus?
     private var lastSavedZone: String?
+    private let watcher: DNSWatcher
+    private var lastSavedLearned: LearnedNames?
 
     init() {
         do {
@@ -27,6 +29,8 @@ final class Daemon {
         lastSavedClockState = ConfigFile.loadClockState()
         lastSavedLastGood = ConfigFile.loadLastGood()
         lastSavedZone = ConfigFile.loadTimeZone()
+        lastSavedLearned = ConfigFile.loadLearned()
+        watcher = DNSWatcher(log: log)
         reconciler = Reconciler(
             hosts: EtcHostsStore(path: Paths.hosts),
             dns: DSCacheFlusher(),
@@ -34,7 +38,9 @@ final class Daemon {
             log: log,
             clockState: lastSavedClockState,
             resolver: ConfigResolver(lastGood: lastSavedLastGood),
-            zone: lastSavedZone.flatMap(TimeZone.init(identifier:)))
+            zone: lastSavedZone.flatMap(TimeZone.init(identifier:)),
+            learned: lastSavedLearned ?? LearnedNames())
+        watcher.onName = { [weak self] name in self?.observed(name) }
     }
 
     /// One reconcile pass. Safe to call from `once` or from the timer.
@@ -50,6 +56,14 @@ final class Daemon {
         if result.timeZone != lastSavedZone, ConfigFile.saveTimeZone(result.timeZone) {
             lastSavedZone = result.timeZone
         }
+        if result.keywordWatchWanted, !watcher.isRunning {
+            watcher.start()
+        } else if !result.keywordWatchWanted, watcher.isRunning {
+            watcher.stop()
+        }
+        if reconciler.learned != lastSavedLearned, ConfigFile.saveLearned(reconciler.learned) {
+            lastSavedLearned = reconciler.learned
+        }
         // The anchor changes rarely (first run, reboot, 24 h reconverge), so this almost never writes.
         if let state = reconciler.clockState, state != lastSavedClockState {
             ConfigFile.saveClockState(state)
@@ -59,7 +73,7 @@ final class Daemon {
         let status = DaemonStatus(
             pid: getpid(), source: result.source,
             clockOffsetSeconds: DaemonStatus.publishedOffset(trusted: result.trusted, wall: clock.wall, tampered: result.clockTampered),
-            clockTampered: result.clockTampered, timeZone: result.timeZone)
+            clockTampered: result.clockTampered, timeZone: result.timeZone, dnsWatch: watcher.state)
         if status != lastSavedStatus, ConfigFile.saveStatus(status) {
             lastSavedStatus = status
         }
@@ -67,6 +81,12 @@ final class Daemon {
             log.info("tick: source=\(result.source.rawValue) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count)")
         }
         reschedule(interval: result.activeSet.bundleIDs.isEmpty ? Self.idleTick : Self.activeTick)
+    }
+
+    /// A DNS question from the watcher. A new match is applied immediately rather than at the
+    /// next tick, so the gap between the lookup and the block is one tick of the kernel, not 30 s.
+    private func observed(_ name: String) {
+        if reconciler.observe(name: name, wall: Date()) { tick() }
     }
 
     /// Wall-clock deadlines keep firing on schedule after sleep; a 2 s leeway still lets the kernel
