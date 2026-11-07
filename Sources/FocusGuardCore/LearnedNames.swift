@@ -12,6 +12,16 @@ public struct LearnedNames: Codable, Equatable {
         self.lastSeen = lastSeen
     }
 
+    private enum CodingKeys: String, CodingKey { case lastSeen }
+
+    /// A file written by an older build is not trusted to hold only site names: anything that is
+    /// not one is dropped here, so it can never reach /etc/hosts.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try c.decode([String: Date].self, forKey: .lastSeen)
+        lastSeen = raw.filter { DomainNormalizer.isHostname($0.key) }
+    }
+
     public var names: Set<String> { Set(lastSeen.keys) }
     public var count: Int { lastSeen.count }
 

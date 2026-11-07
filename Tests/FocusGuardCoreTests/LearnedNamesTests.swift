@@ -133,4 +133,14 @@ final class LearnedNamesTests: XCTestCase {
         XCTAssertEqual(run(), run())
         XCTAssertTrue(run().isSuperset(of: Set((0..<1000).map { "s\($0).com" })))
     }
+
+    // MARK: Decoding (F6)
+
+    func testDecodingDropsNamesThatAreNotHostnames() throws {
+        let json = """
+        {"lastSeen":{"mangadex.org":0,"manga.com\\n1.2.3.4 apple.com":0,"manga.com evil":1,"#manga.com":2,"a..b":3,"manga":4}}
+        """
+        let learned = try JSONDecoder().decode(LearnedNames.self, from: Data(json.utf8))
+        XCTAssertEqual(learned.names, ["mangadex.org"])
+    }
 }
