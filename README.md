@@ -86,12 +86,15 @@ read-manga.net but not mangalore.in; **contains** and **ends with** do what they
 match the **site name only** — never a page path, a search or a title, which HTTPS hides.
 Whole word, starts with and ends with look at the parts of the name between dots and hyphens.
 
-While any list has keyword rules, the daemon watches the Mac's outgoing DNS questions (a
-kernel filter wakes it for those alone; a busy day costs about a second of CPU). A name that
-matches is learned, stored in `/var/db/FocusGuard/learned.json` and blocked from then on in
-every browser and app, during any window whose list has a matching rule. Only matches are
-stored, never your lookup history. The **Always allow** list stops keyword rules (not names
-you listed yourself) from blocking a site and its subdomains.
+While any enabled window's list has keyword rules, the daemon watches the Mac's outgoing DNS
+questions (a kernel filter wakes it for those alone; a busy day costs about a second of CPU).
+A name that matches is learned, stored in `/var/db/FocusGuard/learned.json` and blocked from
+then on in every browser and app, during any window whose list has a matching rule. Only
+matches are stored, never your lookup history. The **Always allow** list stops keyword rules
+(not names you listed yourself) from blocking a site and its subdomains. At most 2000 names
+are kept: past that, a new match evicts the 5 % seen longest ago, skipping any name that is
+blocked right now (a blocked name is never looked up, so it would otherwise always look
+oldest); an evicted name is re-learned on its next lookup.
 
 The first ever lookup of a never-seen matching site succeeds — the answer is already on its
 way back — so that one page may load, and a browser's own cache may keep it working for up to
@@ -144,6 +147,8 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
 - Apps are matched by bundle ID. A copy of an app with its bundle ID edited is a different app
   as far as FocusGuard can tell.
 - Keyword rules see site names only; a page about manga on a site whose name does not match is not caught.
+- A resolver on 127.0.0.1 (NextDNS, AdGuard Home, dnscrypt-proxy) sends the Mac's queries over
+  `lo0`, which is not watched, so keyword learning does not work with a local resolver.
 - An admin user with `sudo` can always dismantle it. With Impossible windows that is the only
   way; it is strong friction, not a wall.
 

@@ -65,7 +65,7 @@ Pure functions in Core: `KeywordRule.matches(name:)`, `Config.keywordBlocks(name
 looked up that matched a rule, each with the time last seen. Only matches are stored, never
 general lookup history. Names never expire. Cap 2000; when exceeded, the oldest-seen names are
 evicted, and only while no window with keyword rules is active, so eviction never unblocks
-something mid-window. The cap is hard: when the set is full, a new match evicts the oldest-seen 5 % first; a genuinely learned name evicted this way is re-learned on its next lookup.
+something mid-window. The cap is hard: when the set is full, a new match evicts the oldest-seen 5 % first; a genuinely learned name evicted this way is re-learned on its next lookup. Names currently rendered into the hosts region are spared: a blocked name never produces a lookup (hosts answers it), so its last-seen time freezes while unblocked names keep refreshing, and without this the drop would take exactly the enforced names mid-window. The daemon passes the set it rendered last tick; eviction takes the oldest unprotected names first and falls back to oldest overall only when every name is protected, with the key breaking ties so the order is deterministic.
 
 Each tick the blocked domain set is `explicit domains ∪ { n ∈ learned : keywordBlocks(n) }`,
 rendered into the hosts region exactly like explicit domains (`0.0.0.0`/`::`, `www.` form).
