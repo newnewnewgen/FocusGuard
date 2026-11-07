@@ -67,4 +67,22 @@ final class LockKeywordTests: XCTestCase {
         new.blockLists[1].keywords = [manga]
         XCTAssertNil(new.weakens(from: old, at: at10))
     }
+
+    func testMovingAProtectedRuleToABasicWindowListIsImpossible() {
+        let other = BlockList(name: "o")
+        let old = Config(blockLists: [list, other], schedules: [window([list.id]), window([other.id], mode: .basic)])
+        var new = old
+        new.blockLists[0].keywords = []
+        new.blockLists[1].keywords = [manga]
+        XCTAssertEqual(new.weakens(from: old, at: at10), .impossible)
+    }
+
+    func testAllowEntryIsJudgedAtALaterKeywordWindowInTheSameStretch() {
+        let early = ScheduleWindow(name: "e", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("11:00")!, blockListIDs: [plain.id], unlockMode: .basic)
+        let late = ScheduleWindow(name: "l", days: [.mon], start: TimeOfDay("10:30")!, end: TimeOfDay("12:00")!, blockListIDs: [list.id], unlockMode: .friction)
+        let old = Config(blockLists: [list, plain], schedules: [early, late])
+        var new = old
+        new.alwaysAllow.append("mangalore.in")
+        XCTAssertEqual(new.weakens(from: old, at: at10), .friction)
+    }
 }

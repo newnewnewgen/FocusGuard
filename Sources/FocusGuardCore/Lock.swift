@@ -123,8 +123,10 @@ extension Config {
 
     private func itemsPerWindow() -> [WindowItems] {
         var perList: [UUID: WindowItems] = [:]
-        for list in blockLists where perList[list.id] == nil {
-            perList[list.id] = WindowItems(set: items(ofLists: [list.id]), keywords: Set(list.keywords.map(\.itemKey)))
+        // `items(ofLists:)` already unions every list sharing an id; keywords are merged here.
+        for list in blockLists {
+            if perList[list.id] == nil { perList[list.id] = WindowItems(set: items(ofLists: [list.id])) }
+            perList[list.id]!.keywords.formUnion(list.keywords.map(\.itemKey))
         }
         return schedules.map { w in
             var out = WindowItems()

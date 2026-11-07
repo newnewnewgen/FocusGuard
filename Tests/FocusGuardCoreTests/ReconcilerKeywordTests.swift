@@ -71,9 +71,23 @@ final class ReconcilerKeywordTests: XCTestCase {
         XCTAssertFalse(sut.tick(live: none, clock: ClockSample(wall: monday(14, 0), monotonic: 102)).keywordWatchWanted)
     }
 
+    func testObserveUnderAHeldProposalLearnsAgainstTheEnforcedConfig() {
+        let strict = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!,
+                                    blockListIDs: [list.id], unlockMode: .impossible)
+        let accepted = Config(blockLists: [list], schedules: [strict])
+        _ = sut.tick(live: accepted, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        var proposal = accepted
+        proposal.blockLists[0].keywords.append(KeywordRule(text: "comic", match: .contains))
+        proposal.blockLists[0].keywords.removeAll { $0.text == "manga" }
+        let r = sut.tick(live: proposal, clock: ClockSample(wall: monday(10, 0, 2), monotonic: 102))
+        XCTAssertEqual(r.source, .held)
+        XCTAssertFalse(sut.observe(name: "comics.org", wall: monday(10, 0, 3)))
+        XCTAssertTrue(sut.observe(name: "mangadex.org", wall: monday(10, 0, 4)))
+    }
+
     func testEvictionOnlyOutsideKeywordWindows() {
-        var full = LearnedNames()
-        for i in 0..<(LearnedNames.cap + 5) { full.record("site\(i).com", at: monday(1, 0).addingTimeInterval(Double(i))) }
+        let full = LearnedNames(lastSeen: Dictionary(uniqueKeysWithValues:
+            (0..<(LearnedNames.cap + 5)).map { ("site\($0).com", monday(1, 0).addingTimeInterval(Double($0))) }))
         let r = Reconciler(hosts: hosts, dns: dns, processes: FakeProcesses(), log: log, calendar: cal, learned: full)
         _ = r.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
         XCTAssertEqual(r.learned.count, LearnedNames.cap + 5, "window active: nothing evicted")

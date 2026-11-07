@@ -24,7 +24,7 @@ extension Config {
     /// well as by the app, so a hand-edited "https://Site.com/" still works.
     public func isAlwaysAllowed(_ name: String) -> Bool {
         let host = name.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        return alwaysAllow.lazy.map(DomainNormalizer.normalize).contains { !$0.isEmpty && DomainNormalizer.host(host, isUnder: $0) }
+        return KeywordMatcher(allowOnly: self).isAllowed(host)
     }
 
     /// Rules in lists attached to windows active at `moment`.
@@ -45,8 +45,7 @@ extension Config {
 
     /// Blocked right now by a keyword rule (and not allowed).
     public func keywordBlocks(name: String, at moment: LocalMoment) -> Bool {
-        guard !isAlwaysAllowed(name) else { return false }
-        return keywordRules(activeAt: moment).contains { $0.matches(name: name) }
+        KeywordMatcher(config: self, at: moment).blocks(name)
     }
 
     /// Worth remembering: matches some rule of an enabled window and is not allowed.
@@ -54,5 +53,37 @@ extension Config {
         guard DomainNormalizer.isHostname(name.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return false }
         guard !isAlwaysAllowed(name) else { return false }
         return allKeywordRules.contains { $0.matches(name: name) }
+    }
+}
+
+/// The keyword rules in force at one moment and the normalized allow list, computed once so a
+/// whole learned set can be judged at a few microseconds per name.
+public struct KeywordMatcher {
+    public let rules: [KeywordRule]
+    public let allowed: [String]
+
+    public init(config: Config, at moment: LocalMoment) {
+        rules = config.keywordRules(activeAt: moment)
+        allowed = config.alwaysAllow.map(DomainNormalizer.normalize).filter { !$0.isEmpty }
+    }
+
+    /// Allow list only (no rules): for callers that just need `isAllowed`.
+    init(allowOnly config: Config) {
+        rules = []
+        allowed = config.alwaysAllow.map(DomainNormalizer.normalize).filter { !$0.isEmpty }
+    }
+
+    private static func normalized(_ name: String) -> String {
+        name.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
+    public func isAllowed(_ name: String) -> Bool {
+        let host = Self.normalized(name)
+        return allowed.contains { DomainNormalizer.host(host, isUnder: $0) }
+    }
+
+    public func blocks(_ name: String) -> Bool {
+        guard !rules.isEmpty, !isAllowed(name) else { return false }
+        return rules.contains { $0.matches(name: name) }
     }
 }

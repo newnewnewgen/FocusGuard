@@ -7,8 +7,8 @@ final class LearnedNamesTests: XCTestCase {
     func testRecordReportsNewNamesOnly() {
         var learned = LearnedNames()
         XCTAssertTrue(learned.record("mangadex.org", at: t0))
-        XCTAssertFalse(learned.record("mangadex.org", at: t0.addingTimeInterval(60)), "already known; last-seen updated")
-        XCTAssertEqual(learned.lastSeen["mangadex.org"], t0.addingTimeInterval(60))
+        XCTAssertFalse(learned.record("mangadex.org", at: t0.addingTimeInterval(7200)), "already known; last-seen updated")
+        XCTAssertEqual(learned.lastSeen["mangadex.org"], t0.addingTimeInterval(7200))
         XCTAssertEqual(learned.names, ["mangadex.org"])
     }
 
@@ -20,9 +20,8 @@ final class LearnedNamesTests: XCTestCase {
 
     func testEvictionDropsTheOldestBeyondTheCap() {
         var learned = LearnedNames()
-        for i in 0..<(LearnedNames.cap + 10) {
-            learned.record("site\(i).com", at: t0.addingTimeInterval(Double(i)))
-        }
+        learned = LearnedNames(lastSeen: Dictionary(uniqueKeysWithValues:
+            (0..<(LearnedNames.cap + 10)).map { ("site\($0).com", t0.addingTimeInterval(Double($0))) }))
         learned.evictBeyondCap()
         XCTAssertEqual(learned.count, LearnedNames.cap)
         XCTAssertFalse(learned.names.contains("site0.com"), "oldest gone")
@@ -56,10 +55,31 @@ final class LearnedNamesTests: XCTestCase {
         XCTAssertTrue(learned.record("xn--mnga-5qa.com", at: t0), "punycode is fine")
     }
 
+    func testRecordAtTheCapDropsTheOldestFivePercent() {
+        var learned = LearnedNames()
+        for i in 0..<LearnedNames.cap { learned.record("site\(i).com", at: t0.addingTimeInterval(Double(i))) }
+        XCTAssertEqual(learned.count, LearnedNames.cap)
+        XCTAssertTrue(learned.record("extra.com", at: t0.addingTimeInterval(1e6)))
+        XCTAssertEqual(learned.count, LearnedNames.cap - LearnedNames.cap / 20 + 1)
+        XCTAssertFalse(learned.names.contains("site0.com"))
+        XCTAssertFalse(learned.names.contains("site\(LearnedNames.cap / 20 - 1).com"))
+        XCTAssertTrue(learned.names.contains("site\(LearnedNames.cap / 20).com"))
+        XCTAssertTrue(learned.names.contains("extra.com"))
+    }
+
+    func testRepeatRecordOnlyRefreshesAfterAnHour() {
+        var learned = LearnedNames()
+        learned.record("mangadex.org", at: t0)
+        learned.record("mangadex.org", at: t0.addingTimeInterval(3000))
+        XCTAssertEqual(learned.lastSeen["mangadex.org"], t0)
+        learned.record("mangadex.org", at: t0.addingTimeInterval(3601))
+        XCTAssertEqual(learned.lastSeen["mangadex.org"], t0.addingTimeInterval(3601))
+    }
+
     func testEvictionIsDeterministicOnTies() {
         func run() -> Set<String> {
-            var l = LearnedNames()
-            for i in 0..<(LearnedNames.cap + 50) { l.record("s\(i).com", at: t0) }
+            var l = LearnedNames(lastSeen: Dictionary(uniqueKeysWithValues:
+                (0..<(LearnedNames.cap + 50)).map { ("s\($0).com", t0) }))
             l.evictBeyondCap()
             return l.names
         }
