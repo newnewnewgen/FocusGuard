@@ -103,7 +103,7 @@ struct BlockListDetail: View {
             }
 
             Section {
-                ForEach(list.keywords) { rule in
+                ForEach(uniqueRules(list.keywords)) { rule in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
                             Text(rule.text).font(.system(.body, design: .monospaced))
@@ -211,6 +211,11 @@ struct BlockListDetail: View {
     private func unique(_ items: [String]) -> [String] {
         var seen = Set<String>()
         return items.filter { seen.insert($0).inserted }
+    }
+
+    private func uniqueRules(_ rules: [KeywordRule]) -> [KeywordRule] {
+        var seen = Set<UUID>()
+        return rules.filter { seen.insert($0.id).inserted }
     }
 
     private func commitName() {
