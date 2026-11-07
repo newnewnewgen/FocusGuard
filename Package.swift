@@ -11,7 +11,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "FocusGuardCore"),
-        .executableTarget(name: "focusguardd", dependencies: ["FocusGuardCore"]),
+        .systemLibrary(name: "CPcap", path: "Sources/CPcap"),
+        .executableTarget(name: "focusguardd", dependencies: ["FocusGuardCore", "CPcap"]),
         .executableTarget(name: "FocusGuard", dependencies: ["FocusGuardCore"], exclude: ["Info.plist"]),
         .testTarget(name: "FocusGuardCoreTests", dependencies: ["FocusGuardCore"]),
         .testTarget(name: "FocusGuardAppTests", dependencies: ["FocusGuard", "FocusGuardCore"]),
