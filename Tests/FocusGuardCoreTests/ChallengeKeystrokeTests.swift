@@ -63,4 +63,9 @@ final class DaemonStatusTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(DaemonStatus.self, from: data), status)
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"held\""))
     }
+
+    func testStatusWithoutDnsWatchDecodes() throws {
+        let old = Data(#"{"clockOffsetSeconds":0,"clockTampered":false,"pid":1,"source":"live","timeZone":"UTC","version":"0.4.0"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(DaemonStatus.self, from: old).dnsWatch, "off")
+    }
 }

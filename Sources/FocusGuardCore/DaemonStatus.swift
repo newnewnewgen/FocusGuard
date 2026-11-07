@@ -35,6 +35,23 @@ public struct DaemonStatus: Codable, Equatable {
         self.dnsWatch = dnsWatch
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case version, pid, source, clockOffsetSeconds, clockTampered, timeZone, dnsWatch
+    }
+
+    /// `dnsWatch` is optional on decode so a 0.5 app reading the status.json of a still-running
+    /// 0.4 daemon sees a status rather than none. Encoding stays synthesized.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(String.self, forKey: .version)
+        pid = try c.decode(Int32.self, forKey: .pid)
+        source = try c.decode(ConfigResolver.Source.self, forKey: .source)
+        clockOffsetSeconds = try c.decode(Int.self, forKey: .clockOffsetSeconds)
+        clockTampered = try c.decode(Bool.self, forKey: .clockTampered)
+        timeZone = try c.decode(String.self, forKey: .timeZone)
+        dnsWatch = try c.decodeIfPresent(String.self, forKey: .dnsWatch) ?? "off"
+    }
+
     /// Offset to publish: nothing while the clocks agree (the small drift inside the guard's
     /// tolerance would only churn the file), otherwise rounded so jitter does not rewrite it.
     public static func publishedOffset(trusted: Date, wall: Date, tampered: Bool) -> Int {

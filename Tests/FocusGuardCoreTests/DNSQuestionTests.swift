@@ -65,6 +65,11 @@ final class DNSQuestionTests: XCTestCase {
         XCTAssertEqual(DNSQuestion.names(in: frame, link: .null), ["read-manga.net"])
     }
 
+    func testNullLinkBigEndianFamily() {
+        let frame: [UInt8] = [0, 0, 0, 2] + ipv4(payload: udp(payload: dnsQuery("example.com")))
+        XCTAssertEqual(DNSQuestion.names(in: frame, link: .null), ["example.com"])
+    }
+
     func testNullLinkIPv6Query() {
         let frame = nullFrame(family: 30, payload: ipv6(payload: udp(payload: dnsQuery("example.com"))))
         XCTAssertEqual(DNSQuestion.names(in: frame, link: .null), ["example.com"])

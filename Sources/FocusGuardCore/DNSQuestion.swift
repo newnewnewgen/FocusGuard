@@ -33,10 +33,12 @@ public enum DNSQuestion {
             return nil
         case .null:
             guard frame.count >= 4 else { return nil }
-            // Host byte order; macOS is little-endian. AF_INET = 2, AF_INET6 = 30.
-            let family = UInt32(frame[0]) | UInt32(frame[1]) << 8 | UInt32(frame[2]) << 16 | UInt32(frame[3]) << 24
-            if family == 2 { return (4, false) }
-            if family == 30 { return (4, true) }
+            // DLT_NULL carries the family in host byte order (little-endian on macOS); DLT_LOOP
+            // in network byte order. Accept either. AF_INET = 2, AF_INET6 = 30.
+            let le = UInt32(frame[0]) | UInt32(frame[1]) << 8 | UInt32(frame[2]) << 16 | UInt32(frame[3]) << 24
+            let be = UInt32(frame[3]) | UInt32(frame[2]) << 8 | UInt32(frame[1]) << 16 | UInt32(frame[0]) << 24
+            if le == 2 || be == 2 { return (4, false) }
+            if le == 30 || be == 30 { return (4, true) }
             return nil
         }
     }
