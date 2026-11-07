@@ -85,4 +85,52 @@ final class LearnedNamesTests: XCTestCase {
         }
         XCTAssertEqual(run(), run())
     }
+
+    // MARK: Protected names (F3): a name in /etc/hosts never produces a lookup, so its lastSeen
+    // freezes; eviction must not pick exactly the names being enforced.
+
+    func testRecordAtTheCapEvictsUnprotectedNamesFirst() {
+        var learned = LearnedNames()
+        for i in 0..<LearnedNames.cap { learned.record("site\(i).com", at: t0.addingTimeInterval(Double(i))) }
+        let protected: Set<String> = Set((0..<200).map { "site\($0).com" })  // the 200 oldest are being enforced
+        XCTAssertTrue(learned.record("extra.com", at: t0.addingTimeInterval(1e6), protected: protected))
+        XCTAssertEqual(learned.count, LearnedNames.cap - LearnedNames.cap / 20 + 1)
+        for p in protected { XCTAssertTrue(learned.names.contains(p), "\(p) is enforced and must survive") }
+        XCTAssertFalse(learned.names.contains("site200.com"), "oldest unprotected gone")
+        XCTAssertFalse(learned.names.contains("site\(200 + LearnedNames.cap / 20 - 1).com"))
+        XCTAssertTrue(learned.names.contains("site\(200 + LearnedNames.cap / 20).com"))
+        XCTAssertTrue(learned.names.contains("extra.com"))
+    }
+
+    func testRecordAtTheCapFallsBackToOldestWhenEveryNameIsProtected() {
+        var learned = LearnedNames()
+        for i in 0..<LearnedNames.cap { learned.record("site\(i).com", at: t0.addingTimeInterval(Double(i))) }
+        XCTAssertTrue(learned.record("extra.com", at: t0.addingTimeInterval(1e6), protected: learned.names))
+        XCTAssertEqual(learned.count, LearnedNames.cap - LearnedNames.cap / 20 + 1)
+        XCTAssertFalse(learned.names.contains("site0.com"), "nothing else to drop: the oldest goes")
+        XCTAssertTrue(learned.names.contains("site\(LearnedNames.cap / 20).com"))
+        XCTAssertTrue(learned.names.contains("extra.com"))
+    }
+
+    func testRecordAtTheCapDropsOnlyWhatIsUnprotectedWhenFewAre() {
+        var learned = LearnedNames()
+        for i in 0..<LearnedNames.cap { learned.record("site\(i).com", at: t0.addingTimeInterval(Double(i))) }
+        let protected = learned.names.subtracting(["site7.com", "site1999.com"])
+        XCTAssertTrue(learned.record("extra.com", at: t0.addingTimeInterval(1e6), protected: protected))
+        XCTAssertFalse(learned.names.contains("site7.com"))
+        XCTAssertFalse(learned.names.contains("site1999.com"))
+        XCTAssertEqual(learned.count, LearnedNames.cap - 2 + 1, "protected names are not touched to make up the 5 %")
+        XCTAssertTrue(learned.names.contains("site0.com"))
+    }
+
+    func testProtectedEvictionIsDeterministicOnTies() {
+        func run() -> Set<String> {
+            var l = LearnedNames(lastSeen: Dictionary(uniqueKeysWithValues:
+                (0..<LearnedNames.cap).map { ("s\($0).com", t0) }))
+            l.record("extra.com", at: t0, protected: Set((0..<1000).map { "s\($0).com" }))
+            return l.names
+        }
+        XCTAssertEqual(run(), run())
+        XCTAssertTrue(run().isSuperset(of: Set((0..<1000).map { "s\($0).com" })))
+    }
 }

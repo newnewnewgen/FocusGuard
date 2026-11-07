@@ -44,6 +44,10 @@ public final class Reconciler {
     public private(set) var learned: LearnedNames
     /// What the last tick enforced, so `observe` can judge a name between ticks.
     private var lastEffective: Config?
+    /// The learned names the last tick rendered into the hosts region. A name in /etc/hosts is
+    /// never looked up again, so its last-seen time freezes; `record` spares these when the cap
+    /// forces an eviction, or the drop would take exactly the names being enforced.
+    private var lastRenderedLearned: Set<String> = []
 
     public init(hosts: HostsFileStore, dns: DNSCacheFlusher, processes: ProcessController, log: ReconcilerLog,
                 clockGuard: ClockGuard = ClockGuard(), clockState: ClockGuard.State? = nil,
@@ -97,7 +101,10 @@ public final class Reconciler {
         if learned.count > LearnedNames.cap, config.keywordRules(activeAt: moment).isEmpty {
             learned.evictBeyondCap()
         }
-        let active = config.activeSet(at: moment, learned: learned.names)
+        let matcher = KeywordMatcher(config: config, at: moment)
+        lastRenderedLearned = learned.names.filter(matcher.blocks)
+        var active = config.activeSet(at: moment)
+        active.domains.formUnion(lastRenderedLearned)
 
         let hostsChanged = reconcileHosts(domains: active.domains)
         let (terminated, killed) = reconcileApps(bundleIDs: active.bundleIDs, monotonic: clock.monotonic)
@@ -140,7 +147,7 @@ public final class Reconciler {
         let name = rawName.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         guard !name.isEmpty, !name.hasSuffix(".arpa"), !name.hasSuffix(".local"),
               let config = lastEffective, config.shouldLearn(name: name) else { return false }
-        let isNew = learned.record(name, at: wall)
+        let isNew = learned.record(name, at: wall, protected: lastRenderedLearned)
         if isNew { log.info("learned \(name)") }
         return isNew
     }

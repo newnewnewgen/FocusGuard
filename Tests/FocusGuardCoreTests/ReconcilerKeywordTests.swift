@@ -94,6 +94,21 @@ final class ReconcilerKeywordTests: XCTestCase {
         _ = r.tick(live: cfg, clock: ClockSample(wall: monday(14, 0), monotonic: 14500))
         XCTAssertEqual(r.learned.count, LearnedNames.cap)
     }
+
+    func testNamesRenderedLastTickSurviveTheCapEviction() {
+        // mangadex.org is the oldest-seen name because /etc/hosts answers it: no lookup ever
+        // refreshes it. A flood of new matches must evict the unblocked names, not the enforced one.
+        var seen = Dictionary(uniqueKeysWithValues:
+            (1..<LearnedNames.cap).map { ("site\($0).com", monday(1, 0).addingTimeInterval(Double($0))) })
+        seen["mangadex.org"] = monday(0, 0)
+        let r = Reconciler(hosts: hosts, dns: dns, processes: FakeProcesses(), log: log, calendar: cal, learned: LearnedNames(lastSeen: seen))
+        _ = r.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        XCTAssertTrue(hosts.contents.contains("0.0.0.0 mangadex.org"))
+        XCTAssertTrue(r.observe(name: "mangaplus.shueisha.co.jp", wall: monday(10, 0, 1)))
+        XCTAssertTrue(r.learned.names.contains("mangadex.org"), "enforced name survives")
+        XCTAssertFalse(r.learned.names.contains("site1.com"), "the oldest unblocked name went instead")
+        XCTAssertTrue(r.learned.names.contains("mangaplus.shueisha.co.jp"))
+    }
 }
 
 private extension ReconcilerKeywordTests {
