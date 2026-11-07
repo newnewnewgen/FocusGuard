@@ -70,23 +70,24 @@ extension Config {
     /// strictest `old` mode among the items whose protection is cut.
     ///
     /// At each evaluated minute within `old`'s current active stretch (at most a week), every
-    /// blocked item — a normalized domain or a bundle ID — has an *effective protection*: the
-    /// strictest `unlockMode` among the active windows that cover it. An item is cut when `self`
-    /// gives it no protection at that minute, or a lower mode than `old` did. Keying on items
-    /// rather than on windows means disabling an impossible window while a basic one still covers
-    /// the same items is a cut, deleting a redundant basic window is not, and delete-plus-recreate
-    /// is judged by what it protects. Walking the stretch catches a shortened end time, a removed
-    /// later window or a lowered mode on a window that only starts later in the same stretch.
+    /// blocked item — a normalized domain, a bundle ID or a keyword rule — has an *effective
+    /// protection*: the strictest `unlockMode` among the active windows that cover it. An item is
+    /// cut when `self` gives it no protection at that minute, or a lower mode than `old` did.
+    /// Keying on items rather than on windows means disabling an impossible window while a basic
+    /// one still covers the same items is a cut, deleting a redundant basic window is not, and
+    /// delete-plus-recreate is judged by what it protects. Walking the stretch catches a shortened
+    /// end time, a removed later window or a lowered mode on a window that only starts later.
+    ///
+    /// Adding an `alwaysAllow` entry may uncover a learned name, so it counts as cutting every
+    /// keyword rule that is protected at that minute (keyword spec §6).
     ///
     /// Windows are handled by position, never looked up by ID: two entries sharing an ID are two
     /// windows, each counted only while it is itself active.
-    ///
-    /// Cost: item sets are computed once per window; the active set is piecewise constant between
-    /// window boundaries, so protection is only recomputed at minutes where the set of active old
-    /// or new windows changes. Everything else is integer comparisons. `Config.Limits` bounds it.
     public func weakens(from old: Config, at moment: LocalMoment) -> UnlockMode? {
         let oldItems = old.itemsPerWindow()
         let newItems = itemsPerWindow()
+        let allowAdded = !Set(alwaysAllow.map(DomainNormalizer.normalize))
+            .subtracting(old.alwaysAllow.map(DomainNormalizer.normalize)).isEmpty
         var worst: UnlockMode?
         var previousOld: [Int]?
         var previousNew: [Int]?
@@ -102,9 +103,10 @@ extension Config {
             let oldProtection = Self.protection(of: old.schedules, active: oldActive, items: oldItems)
             let newProtection = Self.protection(of: schedules, active: newActive, items: newItems)
             for (item, oldMode) in oldProtection {
-                guard let newMode = newProtection[item], newMode >= oldMode else {
+                let kept = newProtection[item].map { $0 >= oldMode } ?? false
+                let uncovered = allowAdded && item.hasPrefix("k:")
+                if !kept || uncovered {
                     worst = max(worst ?? oldMode, oldMode)
-                    continue
                 }
             }
             if worst == .impossible { break }
@@ -114,29 +116,38 @@ extension Config {
 
     /// Each window's blocked items, by position in `schedules`. Domain normalization is the
     /// expensive part, so every list is normalized a single time and windows union the results.
-    private func itemsPerWindow() -> [ActiveSet] {
-        var perList: [UUID: ActiveSet] = [:]
-        for list in blockLists where perList[list.id] == nil { perList[list.id] = items(ofLists: [list.id]) }
+    private struct WindowItems {
+        var set = ActiveSet.empty
+        var keywords = Set<String>()
+    }
+
+    private func itemsPerWindow() -> [WindowItems] {
+        var perList: [UUID: WindowItems] = [:]
+        for list in blockLists where perList[list.id] == nil {
+            perList[list.id] = WindowItems(set: items(ofLists: [list.id]), keywords: Set(list.keywords.map(\.itemKey)))
+        }
         return schedules.map { w in
-            var set = ActiveSet.empty
+            var out = WindowItems()
             for id in w.blockListIDs {
                 guard let l = perList[id] else { continue }
-                set.domains.formUnion(l.domains)
-                set.bundleIDs.formUnion(l.bundleIDs)
+                out.set.domains.formUnion(l.set.domains)
+                out.set.bundleIDs.formUnion(l.set.bundleIDs)
+                out.keywords.formUnion(l.keywords)
             }
-            return set
+            return out
         }
     }
 
     /// Effective protection of every item covered by the windows at the `active` positions:
-    /// strictest mode wins. Keys carry a kind prefix so a domain and a bundle ID never collide.
+    /// strictest mode wins. Keys carry a kind prefix so the kinds can never collide.
     private static func protection(of windows: [ScheduleWindow], active: [Int],
-                                   items: [ActiveSet]) -> [String: UnlockMode] {
+                                   items: [WindowItems]) -> [String: UnlockMode] {
         var map: [String: UnlockMode] = [:]
         for i in active {
             let mode = windows[i].unlockMode
-            for d in items[i].domains { map["d:" + d] = max(map["d:" + d] ?? mode, mode) }
-            for b in items[i].bundleIDs { map["a:" + b] = max(map["a:" + b] ?? mode, mode) }
+            for d in items[i].set.domains { map["d:" + d] = max(map["d:" + d] ?? mode, mode) }
+            for b in items[i].set.bundleIDs { map["a:" + b] = max(map["a:" + b] ?? mode, mode) }
+            for k in items[i].keywords { map["k:" + k] = max(map["k:" + k] ?? mode, mode) }
         }
         return map
     }
