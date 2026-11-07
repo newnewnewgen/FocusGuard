@@ -84,9 +84,21 @@ final class DNSWatcher {
         closeAll()
         for name in wanted { open(name) }
         lastWanted = wanted
-        let watching = captures.map(\.interface)
-        state = watching.isEmpty ? "error: no interface could be opened" : "watching " + watching.joined(separator: ", ")
+        updateState(wanted: wanted)
         log.info("keyword watch: \(state)")
+    }
+
+    /// No interface at all is not an error (the Mac is offline); interfaces that all refused to
+    /// open is. The app's Status tab shows anything but `watching` as "not yet", not as a fault.
+    private func updateState(wanted: [String]) {
+        let watching = captures.map(\.interface)
+        if !watching.isEmpty {
+            state = "watching " + watching.joined(separator: ", ")
+        } else if wanted.isEmpty {
+            state = "waiting for network"
+        } else {
+            state = "error: no interface could be opened"
+        }
     }
 
     /// Cancelling a source closes its handle in the cancel handler (the file-descriptor source
@@ -163,11 +175,20 @@ final class DNSWatcher {
         var header: UnsafeMutablePointer<pcap_pkthdr>?
         var data: UnsafePointer<UInt8>?
         var n = 0
-        while n < Self.drainBatch, pcap_next_ex(handle, &header, &data) == 1 {
+        var rc: Int32 = 1
+        while n < Self.drainBatch {
+            rc = pcap_next_ex(handle, &header, &data)
+            guard rc == 1 else { break }
             n += 1
             guard let h = header?.pointee, let d = data else { continue }
             let frame = Array(UnsafeBufferPointer(start: d, count: Int(h.caplen)))
             for name in DNSQuestion.names(in: frame, link: link) { onName?(name) }
+        }
+        if rc == PCAP_ERROR {
+            // The handle is dead (the interface went away under it, say): a dead handle left in
+            // `captures` would keep the state at "watching" with nothing being watched.
+            dropDead(handle)
+            return
         }
         if n == Self.drainBatch {
             DispatchQueue.main.async { [weak self] in
@@ -176,5 +197,18 @@ final class DNSWatcher {
                 self.drain(handle, link: link)
             }
         }
+    }
+
+    /// `pcap_next_ex` returned PCAP_ERROR for this handle: log it, close it (cancelling the source
+    /// closes the handle), recompute the state, and forget the wanted set so the next path event
+    /// reopens everything rather than being skipped as unchanged.
+    private func dropDead(_ handle: OpaquePointer) {
+        guard let i = captures.firstIndex(where: { $0.handle == handle }) else { return }
+        let dead = captures.remove(at: i)
+        log.error("keyword watch: \(dead.interface): \(String(cString: pcap_geterr(handle))); closed")
+        dead.source.cancel()
+        lastWanted = []
+        updateState(wanted: [dead.interface])
+        log.info("keyword watch: \(state)")
     }
 }
