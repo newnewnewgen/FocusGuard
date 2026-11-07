@@ -25,10 +25,17 @@ final class DNSWatcher {
     private let log: ReconcilerLog
     private var captures: [Capture] = []
     private var monitor: NWPathMonitor?
+    /// The interface set last asked for, opened or not: an interface that refuses to open must
+    /// not make every path event tear down and reopen the ones that did.
+    private var lastWanted: [String] = []
+    /// Packets handled per read event before yielding the main queue to ticks and signals.
+    private static let drainBatch = 256
 
     init(log: ReconcilerLog) {
         self.log = log
     }
+
+    deinit { stop() }
 
     func start() {
         guard monitor == nil else { return }
@@ -70,21 +77,24 @@ final class DNSWatcher {
     }
 
     private func reopen() {
+        // A path update queued before stop() must not open captures after it.
+        guard monitor != nil else { return }
         let wanted = Self.activeInterfaces()
-        guard wanted != captures.map(\.interface) else { return }
+        guard wanted != lastWanted else { return }
         closeAll()
         for name in wanted { open(name) }
+        lastWanted = wanted
         let watching = captures.map(\.interface)
         state = watching.isEmpty ? "error: no interface could be opened" : "watching " + watching.joined(separator: ", ")
         log.info("keyword watch: \(state)")
     }
 
+    /// Cancelling a source closes its handle in the cancel handler (the file-descriptor source
+    /// contract: the descriptor outlives the source until then).
     private func closeAll() {
-        for c in captures {
-            c.source.cancel()
-            pcap_close(c.handle)
-        }
+        for c in captures { c.source.cancel() }
         captures = []
+        lastWanted = []
     }
 
     private func open(_ interface: String) {
@@ -97,20 +107,32 @@ final class DNSWatcher {
         pcap_set_promisc(handle, 0)
         pcap_set_timeout(handle, 100)
         pcap_set_immediate_mode(handle, 1)       // deliver each packet as it arrives
-        guard pcap_activate(handle) == 0 else {
+        pcap_set_buffer_size(handle, 64 * 1024)  // DNS questions are tiny; the default is 512 KB per handle
+        let activated = pcap_activate(handle)
+        guard activated >= 0 else {
             log.error("keyword watch: activate \(interface): \(String(cString: pcap_geterr(handle)))")
             pcap_close(handle)
             return
         }
+        if activated > 0 {
+            log.info("keyword watch: activate \(interface) warned: \(String(cString: pcap_geterr(handle)))")
+        }
         var program = bpf_program()
-        guard pcap_compile(handle, &program, "udp and dst port 53", 1, PCAP_NETMASK_UNKNOWN) == 0,
-              pcap_setfilter(handle, &program) == 0 else {
+        guard pcap_compile(handle, &program, "udp and dst port 53", 1, PCAP_NETMASK_UNKNOWN) == 0 else {
             log.error("keyword watch: filter \(interface): \(String(cString: pcap_geterr(handle)))")
             pcap_close(handle)
             return
         }
+        let filtered = pcap_setfilter(handle, &program)
         pcap_freecode(&program)
-        pcap_setnonblock(handle, 1, &errbuf)
+        guard filtered == 0 else {
+            log.error("keyword watch: filter \(interface): \(String(cString: pcap_geterr(handle)))")
+            pcap_close(handle)
+            return
+        }
+        if pcap_setnonblock(handle, 1, &errbuf) != 0 {
+            log.error("keyword watch: nonblock \(interface): \(String(cString: errbuf))")
+        }
         let link: DNSQuestion.LinkType
         switch pcap_datalink(handle) {
         case DLT_EN10MB: link = .ethernet
@@ -128,18 +150,31 @@ final class DNSWatcher {
         }
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
         source.setEventHandler { [weak self] in self?.drain(handle, link: link) }
+        source.setCancelHandler { pcap_close(handle) }
         source.resume()
         captures.append(Capture(interface: interface, handle: handle, source: source, link: link))
     }
 
-    /// Read every packet the kernel has queued, parse, hand names up.
+    /// Read the packets the kernel has queued, parse, hand names up. At most `drainBatch` per
+    /// call; past that the rest is taken on a later turn of the main queue so ticks and signals
+    /// get in between (libpcap buffers the remainder in userland, so the descriptor may not
+    /// report readable again on its own).
     private func drain(_ handle: OpaquePointer, link: DNSQuestion.LinkType) {
         var header: UnsafeMutablePointer<pcap_pkthdr>?
         var data: UnsafePointer<UInt8>?
-        while pcap_next_ex(handle, &header, &data) == 1 {
+        var n = 0
+        while n < Self.drainBatch, pcap_next_ex(handle, &header, &data) == 1 {
+            n += 1
             guard let h = header?.pointee, let d = data else { continue }
             let frame = Array(UnsafeBufferPointer(start: d, count: Int(h.caplen)))
             for name in DNSQuestion.names(in: frame, link: link) { onName?(name) }
+        }
+        if n == Self.drainBatch {
+            DispatchQueue.main.async { [weak self] in
+                // Only if this handle is still one of ours.
+                guard let self, self.captures.contains(where: { $0.handle == handle }) else { return }
+                self.drain(handle, link: link)
+            }
         }
     }
 }

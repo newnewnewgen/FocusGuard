@@ -19,6 +19,8 @@ final class Daemon {
     private var lastSavedZone: String?
     private let watcher: DNSWatcher
     private var lastSavedLearned: LearnedNames?
+    private var lastLearnedSave: Date = .distantPast
+    private var tickPending = false
 
     init() {
         do {
@@ -56,13 +58,20 @@ final class Daemon {
         if result.timeZone != lastSavedZone, ConfigFile.saveTimeZone(result.timeZone) {
             lastSavedZone = result.timeZone
         }
-        if result.keywordWatchWanted, !watcher.isRunning {
+        // Only the long-running daemon watches; `once` must never open BPF devices.
+        if result.keywordWatchWanted, timer != nil, !watcher.isRunning {
             watcher.start()
         } else if !result.keywordWatchWanted, watcher.isRunning {
             watcher.stop()
         }
-        if reconciler.learned != lastSavedLearned, ConfigFile.saveLearned(reconciler.learned) {
-            lastSavedLearned = reconciler.learned
+        // `record` refreshes lastSeen on every repeat lookup, so "changed" alone would rewrite the
+        // file every tick: save when the set of names changes, or at most every 10 minutes otherwise.
+        let learnedNow = reconciler.learned
+        if learnedNow != lastSavedLearned,
+           learnedNow.names != lastSavedLearned?.names ?? [] || Date().timeIntervalSince(lastLearnedSave) > 600,
+           ConfigFile.saveLearned(learnedNow) {
+            lastSavedLearned = learnedNow
+            lastLearnedSave = Date()
         }
         // The anchor changes rarely (first run, reboot, 24 h reconverge), so this almost never writes.
         if let state = reconciler.clockState, state != lastSavedClockState {
@@ -83,10 +92,18 @@ final class Daemon {
         reschedule(interval: result.activeSet.bundleIDs.isEmpty ? Self.idleTick : Self.activeTick)
     }
 
-    /// A DNS question from the watcher. A new match is applied immediately rather than at the
-    /// next tick, so the gap between the lookup and the block is one tick of the kernel, not 30 s.
+    /// A DNS question from the watcher. New matches are applied on the next run-loop turn,
+    /// once per turn however many arrive: never from inside the packet loop (which still holds
+    /// the capture handle a tick may close), and a page load that reveals several new names
+    /// costs one hosts rewrite, not one per name.
     private func observed(_ name: String) {
-        if reconciler.observe(name: name, wall: Date()) { tick() }
+        guard reconciler.observe(name: name, wall: Date()), !tickPending else { return }
+        tickPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.tickPending = false
+            self.tick()
+        }
     }
 
     /// Wall-clock deadlines keep firing on schedule after sleep; a 2 s leeway still lets the kernel
