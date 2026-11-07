@@ -65,7 +65,7 @@ Pure functions in Core: `KeywordRule.matches(name:)`, `Config.keywordBlocks(name
 looked up that matched a rule, each with the time last seen. Only matches are stored, never
 general lookup history. Names never expire. Cap 2000; when exceeded, the oldest-seen names are
 evicted, and only while no window with keyword rules is active, so eviction never unblocks
-something mid-window.
+something mid-window. The cap is hard: when the set is full, a new match evicts the oldest-seen 5 % first; a genuinely learned name evicted this way is re-learned on its next lookup.
 
 Each tick the blocked domain set is `explicit domains ∪ { n ∈ learned : keywordBlocks(n) }`,
 rendered into the hosts region exactly like explicit domains (`0.0.0.0`/`::`, `www.` form).
@@ -89,8 +89,8 @@ name in v1; an `alwaysAllow` entry is how a wrongly caught site is released.
   labels and malformed packets are rejected, never trusted.
 - On a match: record in `learned`, rewrite the hosts region now (not at the next tick) and flush
   the DNS cache, so the gap is one lookup, not up to 30 s.
-- Interface changes (Wi-Fi join, VPN up/down) arrive through `SCDynamicStore` notifications for
-  `State:/Network/Interface`; captures are reopened then. No polling.
+- Interface changes (Wi-Fi join, VPN up/down) arrive through `NWPathMonitor` (event-driven, same semantics as
+  `SCDynamicStore` notifications for `State:/Network/Interface`); captures are reopened then. No polling.
 - Watching is independent of windows so that a site seen on Tuesday is already known when
   Wednesday's window opens; this is what closes the first-visit gap in practice.
 

@@ -78,6 +78,27 @@ What still gets around it: `sudo` (see Recovery), and the gaps below. **Friction
 bump, not a lock**: it exists only in the app, and editing `config.json` in a text editor
 skips it.
 
+## Keywords
+
+A block list can hold keyword rules as well as site names: `manga` with **starts with** blocks
+mangadex.org and mangaplus.shueisha.co.jp; **whole word** blocks manga.example.com and
+read-manga.net but not mangalore.in; **contains** and **ends with** do what they say. Rules
+match the **site name only** — never a page path, a search or a title, which HTTPS hides.
+Whole word, starts with and ends with look at the parts of the name between dots and hyphens.
+
+While any list has keyword rules, the daemon watches the Mac's outgoing DNS questions (a
+kernel filter wakes it for those alone; a busy day costs about a second of CPU). A name that
+matches is learned, stored in `/var/db/FocusGuard/learned.json` and blocked from then on in
+every browser and app, during any window whose list has a matching rule. Only matches are
+stored, never your lookup history. The **Always allow** list stops keyword rules (not names
+you listed yourself) from blocking a site and its subdomains.
+
+The first ever lookup of a never-seen matching site succeeds — the answer is already on its
+way back — so that one page may load, and a browser's own cache may keep it working for up to
+about a minute. Sites you have visited before, inside or outside a window, are known already.
+Encrypted DNS configured system-wide and iCloud Private Relay hide lookups from the daemon,
+as they already hide them from the hosts layer. VPNs that use `ipsec*` or `ppp*` interfaces rather than `utun*` are not watched.
+
 ## How enforcement works
 
 - **Sites:** a marked region in `/etc/hosts` (`# FOCUSGUARD START` … `END`) with `0.0.0.0`
@@ -122,6 +143,7 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
   DoH provider.
 - Apps are matched by bundle ID. A copy of an app with its bundle ID edited is a different app
   as far as FocusGuard can tell.
+- Keyword rules see site names only; a page about manga on a site whose name does not match is not caught.
 - An admin user with `sudo` can always dismantle it. With Impossible windows that is the only
   way; it is strong friction, not a wall.
 
@@ -132,6 +154,8 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
 
 `scripts/verify-impossible.sh` attacks a real 5-minute Impossible window the ways a user could
 without a password and checks it holds, then releases by itself (~6 minutes, no `sudo`).
+
+`scripts/verify-keywords.sh` checks keyword rules, learning, the allow list and the Impossible hold (~2 minutes, no `sudo`).
 
 Daemon-only acceptance scripts (need `sudo`): `scripts/verify-once.sh` (single pass, no
 launchd), `scripts/verify-launchd.sh` (installed daemon, ~5 minutes), `scripts/verify-teardown.sh`
