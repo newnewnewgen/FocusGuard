@@ -3,7 +3,7 @@ import Foundation
 /// The one version string, logged by the daemon and compared by the app to tell whether the
 /// installed daemon is the one this app ships. Keep in step with CFBundleShortVersionString.
 public enum FocusGuardVersion {
-    public static let current = "0.4.0"
+    public static let current = "0.5.0"
 }
 
 /// What the daemon tells the app, in a root-owned, world-readable file the user cannot forge.
@@ -21,15 +21,18 @@ public struct DaemonStatus: Codable, Equatable {
     /// The time zone the daemon reads the schedule in. Normally the Mac's; during an Impossible
     /// window a change of zone is held back, and the app must use this one to agree.
     public var timeZone: String
+    /// "off" (no keyword rules), "watching en0, utun4", or "error: …" (keyword spec §7).
+    public var dnsWatch: String
 
     public init(version: String = FocusGuardVersion.current, pid: Int32, source: ConfigResolver.Source,
-                clockOffsetSeconds: Int, clockTampered: Bool, timeZone: String) {
+                clockOffsetSeconds: Int, clockTampered: Bool, timeZone: String, dnsWatch: String = "off") {
         self.version = version
         self.pid = pid
         self.source = source
         self.clockOffsetSeconds = clockOffsetSeconds
         self.clockTampered = clockTampered
         self.timeZone = timeZone
+        self.dnsWatch = dnsWatch
     }
 
     /// Offset to publish: nothing while the clocks agree (the small drift inside the guard's

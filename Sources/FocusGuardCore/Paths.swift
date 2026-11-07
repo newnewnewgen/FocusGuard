@@ -21,6 +21,8 @@ public enum Paths {
     public static let status = stateDir + "/status.json"
     /// Identifier of the time zone the daemon is reading the schedule in, 0644.
     public static let timeZone = stateDir + "/time-zone"
+    /// `LearnedNames`, 0644: names learned from lookups that matched a keyword rule.
+    public static let learned = stateDir + "/learned.json"
     /// Where state lived before 0.4.0, inside the user-writable support dir; migrated once.
     public static let legacyStateDir = supportDir + "/state"
 
