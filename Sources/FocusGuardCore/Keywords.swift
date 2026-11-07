@@ -8,6 +8,7 @@ extension KeywordRule {
 
     /// `name` is a site name as looked up; case and a trailing dot are ignored.
     public func matches(name rawName: String) -> Bool {
+        guard isValid else { return false }
         let name = rawName.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         switch match {
         case .contains: return name.contains(text)
@@ -50,6 +51,7 @@ extension Config {
 
     /// Worth remembering: matches some rule of an enabled window and is not allowed.
     public func shouldLearn(name: String) -> Bool {
+        guard DomainNormalizer.isHostname(name.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return false }
         guard !isAlwaysAllowed(name) else { return false }
         return allKeywordRules.contains { $0.matches(name: name) }
     }

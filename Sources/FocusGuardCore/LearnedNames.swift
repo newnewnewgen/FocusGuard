@@ -19,6 +19,7 @@ public struct LearnedNames: Codable, Equatable {
     @discardableResult
     public mutating func record(_ rawName: String, at date: Date) -> Bool {
         let name = rawName.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard DomainNormalizer.isHostname(name) else { return false }
         let isNew = lastSeen[name] == nil
         lastSeen[name] = date
         return isNew
@@ -28,7 +29,7 @@ public struct LearnedNames: Codable, Equatable {
     /// keyword rules is active, so eviction never unblocks something mid-window.
     public mutating func evictBeyondCap() {
         guard lastSeen.count > Self.cap else { return }
-        let keep = lastSeen.sorted { $0.value > $1.value }.prefix(Self.cap)
+        let keep = lastSeen.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(Self.cap)
         lastSeen = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
     }
 

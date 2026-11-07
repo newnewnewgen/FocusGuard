@@ -45,4 +45,24 @@ final class LearnedNamesTests: XCTestCase {
         let data = try JSONEncoder().encode(learned)
         XCTAssertEqual(try JSONDecoder().decode(LearnedNames.self, from: data), learned)
     }
+
+    func testRecordRejectsAnythingThatIsNotAHostname() {
+        var learned = LearnedNames()
+        for bad in ["manga.com\n1.2.3.4 apple.com", "manga.com evil", "manga", "", "a..b", "#manga.com",
+                    String(repeating: "a", count: 64) + ".com", "mang\u{E9}.com"] {
+            XCTAssertFalse(learned.record(bad, at: t0), bad)
+        }
+        XCTAssertEqual(learned.count, 0)
+        XCTAssertTrue(learned.record("xn--mnga-5qa.com", at: t0), "punycode is fine")
+    }
+
+    func testEvictionIsDeterministicOnTies() {
+        func run() -> Set<String> {
+            var l = LearnedNames()
+            for i in 0..<(LearnedNames.cap + 50) { l.record("s\(i).com", at: t0) }
+            l.evictBeyondCap()
+            return l.names
+        }
+        XCTAssertEqual(run(), run())
+    }
 }

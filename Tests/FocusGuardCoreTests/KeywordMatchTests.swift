@@ -68,4 +68,17 @@ final class KeywordMatchTests: XCTestCase {
         XCTAssertFalse(config.shouldLearn(name: "mangalore.in"))
         XCTAssertFalse(config.shouldLearn(name: "comics.org"))
     }
+
+    func testShouldLearnRejectsNonHostnames() {
+        let list = BlockList(name: "l", keywords: [rule(.contains)])
+        let window = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!, blockListIDs: [list.id])
+        let config = Config(blockLists: [list], schedules: [window])
+        XCTAssertFalse(config.shouldLearn(name: "manga.com\n1.2.3.4 apple.com"))
+        XCTAssertFalse(config.shouldLearn(name: "manga"))
+    }
+
+    func testAnInvalidRuleNeverMatches() {
+        XCTAssertFalse(KeywordRule(text: "", match: .startsWith).matches(name: "anything.com"))
+        XCTAssertFalse(KeywordRule(text: "Manga", match: .contains).matches(name: "manga.com"), "not normalized → not valid")
+    }
 }
