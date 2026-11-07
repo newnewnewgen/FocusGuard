@@ -47,4 +47,14 @@ final class KeywordModelTests: XCTestCase {
         allows.alwaysAllow = (0...Config.Limits.maxAllow).map { "a\($0).com" }
         XCTAssertThrowsError(try Config.decodeJSON(try allows.encodeJSON()))
     }
+
+    func testDuplicateKeywordRuleIDsDoNotDecode() throws {
+        let rule = KeywordRule(text: "manga", match: .contains)
+        let twice = Config(blockLists: [BlockList(name: "l", keywords: [rule, KeywordRule(id: rule.id, text: "comic", match: .contains)])])
+        XCTAssertThrowsError(try Config.decodeJSON(try twice.encodeJSON())) { error in
+            XCTAssertEqual(error as? Config.ValidationError, .duplicateID("keyword rules"))
+        }
+        let acrossLists = Config(blockLists: [BlockList(name: "a", keywords: [rule]), BlockList(name: "b", keywords: [rule])])
+        XCTAssertThrowsError(try Config.decodeJSON(try acrossLists.encodeJSON()), "the app keys learned names by rule id across every list")
+    }
 }

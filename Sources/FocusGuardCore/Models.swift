@@ -275,6 +275,7 @@ public struct Config: Codable, Equatable {
 
     /// IDs must be unique: with two windows sharing an ID, "is this window still protecting its
     /// items?" has no single answer, which was once enough to slip a weakening past the lock.
+    /// Keyword rule ids are unique across all lists: the app keys learned names by rule id.
     public func validate() throws {
         guard schedules.count <= Limits.maxWindows else { throw ValidationError.tooLarge("\(schedules.count) windows; the limit is \(Limits.maxWindows)") }
         guard blockLists.count <= Limits.maxLists else { throw ValidationError.tooLarge("\(blockLists.count) lists; the limit is \(Limits.maxLists)") }
@@ -287,6 +288,7 @@ public struct Config: Codable, Equatable {
         let keywords = blockLists.flatMap(\.keywords)
         guard keywords.count <= Limits.maxKeywords else { throw ValidationError.tooLarge("\(keywords.count) keywords; the limit is \(Limits.maxKeywords)") }
         if let bad = keywords.first(where: { !$0.isValid }) { throw ValidationError.invalidKeyword(bad.text) }
+        guard Set(keywords.map(\.id)).count == keywords.count else { throw ValidationError.duplicateID("keyword rules") }
         guard alwaysAllow.count <= Limits.maxAllow else { throw ValidationError.tooLarge("\(alwaysAllow.count) allow entries; the limit is \(Limits.maxAllow)") }
     }
 }
