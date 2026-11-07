@@ -13,6 +13,12 @@ struct StatusTab: View {
             Section("Protection") {
                 daemonRow(inst)
                 Toggle("Open FocusGuard at login", isOn: Binding(get: { inst.opensAtLogin }, set: { inst.setOpensAtLogin($0) }))
+                if model.hasKeywordRules || (model.keywordWatch ?? "off") != "off" {
+                    let watch = model.keywordWatch ?? "unknown (daemon status not available)"
+                    row(done: watch.hasPrefix("watching"), "Keyword matching: \(watch)",
+                        detail: watch.hasPrefix("watching") ? "Sites whose names match your keywords are learned from the Mac's lookups and blocked." :
+                                "Keyword rules are inert until the daemon can watch lookups; sites and apps listed by name still work.")
+                }
                 Text("The background daemon blocks sites and apps whether or not this app is open. The app is where you edit lists and schedules; while it is open, blocked apps close instantly rather than within two seconds.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let err = inst.lastError { Text(err).foregroundStyle(.red).font(.callout) }

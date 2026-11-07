@@ -31,6 +31,8 @@ final class AppModel {
     private(set) var nextWindowNames: [String] = []
     /// The config the daemon has accepted (root-owned file, readable by us).
     private(set) var enforced: Config?
+    /// Names the daemon has learned (root-owned file, readable). Shown under each rule.
+    private(set) var learned: Set<String> = []
 
     var pendingChallenge: PendingChallenge?
     var lockedMessage: String?
@@ -91,6 +93,14 @@ final class AppModel {
     /// config.json cannot be read and the daemon has a copy we could put back.
     var canRestoreConfig: Bool { config == nil && enforced != nil }
 
+    /// Learned names this rule catches, for "Blocked so far".
+    func learnedNames(for rule: KeywordRule) -> [String] {
+        learned.filter { rule.matches(name: $0) && !(config ?? .empty).isAlwaysAllowed($0) }.sorted()
+    }
+    /// What the daemon reports about lookup watching; nil when no daemon status is known.
+    var keywordWatch: String? { installer.status?.dnsWatch }
+    var hasKeywordRules: Bool { (config ?? .empty).hasKeywordRules }
+
     // MARK: Derived state
 
     /// Views may edit only when a config loaded (a parse error disables the editors).
@@ -124,6 +134,8 @@ final class AppModel {
     func refresh() {
         watchDaemonStateIfPossible()
         enforced = FileManager.default.contents(atPath: Paths.lastGood).flatMap { try? Config.decodeJSON($0) }
+        learned = FileManager.default.contents(atPath: Paths.learned)
+            .flatMap { try? JSONDecoder().decode(LearnedNames.self, from: $0) }?.names ?? []
         let now = trustedNow
         let calendar = daemonCalendar
         let moment = LocalMoment(date: now, calendar: calendar)
