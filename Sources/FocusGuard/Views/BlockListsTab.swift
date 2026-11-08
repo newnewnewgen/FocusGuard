@@ -62,6 +62,7 @@ struct BlockListDetail: View {
     @State private var newAllow = ""
     @State private var allowHint: String?
     @State private var showAddApp = false
+    @State private var bulkKind: BulkAddSheet.Kind?
     @FocusState private var nameFocused: Bool
     /// Bumped on every refused edit; `.id(refused)` rebuilds the form from the saved config.
     @State private var refused = 0
@@ -92,7 +93,10 @@ struct BlockListDetail: View {
                     }
                 }
                 // Adding is never gated by an unlock mode; only an empty field disables the button.
-                AddRow("Add a site, e.g. reddit.com", text: $newDomain, onSubmit: addDomain)
+                AddRow("Add a site, e.g. reddit.com", text: $newDomain, onSubmit: addDomain) {
+                } accessory: {
+                    Button("Add many\u{2026}") { bulkKind = .sites }
+                }
                 if let hint = domainHint {
                     Text(hint).font(.caption).foregroundStyle(.red)
                 }
@@ -127,6 +131,8 @@ struct BlockListDetail: View {
                         ForEach(KeywordRule.Match.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
                     .labelsHidden().frame(width: 130)
+                } accessory: {
+                    Button("Add many\u{2026}") { bulkKind = .keywords }
                 }
                 if let hint = keywordHint { Text(hint).font(.caption).foregroundStyle(.red) }
             } header: {
@@ -177,6 +183,29 @@ struct BlockListDetail: View {
                 commit { $0.update(list: list.id) { l in
                     for id in ids where !l.appBundleIDs.contains(id) { l.appBundleIDs.append(id) }
                 } }
+            }
+        }
+        .sheet(item: $bulkKind) { kind in
+            let lists = model.config?.blockLists ?? []
+            switch kind {
+            case .sites:
+                BulkAddSheet(kind: .sites, listName: list.name, existing: Set(list.domains),
+                             totalInConfig: lists.reduce(0) { $0 + $1.domains.count }) { sites, _ in
+                    // One commit for the whole batch: one config write, one lock judgment.
+                    commit { $0.update(list: list.id) { l in
+                        for d in sites where !l.domains.contains(d) { l.domains.append(d) }
+                    } }
+                }
+            case .keywords:
+                BulkAddSheet(kind: .keywords, listName: list.name, existing: Set(list.keywords.map(\.itemKey)),
+                             totalInConfig: lists.reduce(0) { $0 + $1.keywords.count }) { words, match in
+                    commit { $0.update(list: list.id) { l in
+                        for w in words {
+                            let rule = KeywordRule(text: w, match: match)
+                            if !l.keywords.contains(where: { $0.itemKey == rule.itemKey }) { l.keywords.append(rule) }
+                        }
+                    } }
+                }
             }
         }
     }
