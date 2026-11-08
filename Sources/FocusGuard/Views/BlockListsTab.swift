@@ -91,12 +91,8 @@ struct BlockListDetail: View {
                         removeButton { commit { $0.update(list: list.id) { $0.domains.removeAll { $0 == domain } } } }
                     }
                 }
-                HStack {
-                    TextField("Add a site, e.g. reddit.com", text: $newDomain).onSubmit(addDomain)
-                    // Adding is never gated by an unlock mode; only an empty field disables the button.
-                    Button("Add", action: addDomain)
-                        .disabled(newDomain.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                // Adding is never gated by an unlock mode; only an empty field disables the button.
+                AddRow("Add a site, e.g. reddit.com", text: $newDomain, onSubmit: addDomain)
                 if let hint = domainHint {
                     Text(hint).font(.caption).foregroundStyle(.red)
                 }
@@ -126,13 +122,11 @@ struct BlockListDetail: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                HStack {
-                    TextField("Add a keyword, e.g. manga", text: $newKeyword).onSubmit(addKeyword)
+                AddRow("Add a keyword, e.g. manga", text: $newKeyword, onSubmit: addKeyword) {
                     Picker("", selection: $newMatch) {
                         ForEach(KeywordRule.Match.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
                     .labelsHidden().frame(width: 130)
-                    Button("Add", action: addKeyword).disabled(newKeyword.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 if let hint = keywordHint { Text(hint).font(.caption).foregroundStyle(.red) }
             } header: {
@@ -167,10 +161,7 @@ struct BlockListDetail: View {
                             .buttonStyle(.borderless)
                     }
                 }
-                HStack {
-                    TextField("Never block this site, e.g. mangalore.in", text: $newAllow).onSubmit(addAllow)
-                    Button("Allow", action: addAllow).disabled(newAllow.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                AddRow("Never block this site, e.g. mangalore.in", text: $newAllow, buttonTitle: "Allow", onSubmit: addAllow)
                 if let hint = allowHint { Text(hint).font(.caption).foregroundStyle(.red) }
             } header: {
                 Text("Always allow (all lists)")
