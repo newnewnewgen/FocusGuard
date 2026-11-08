@@ -1,6 +1,6 @@
 # Keyword blocking — design
 
-**Date:** 2026-11-06 · **Status:** approved in conversation, awaiting spec review
+**Date:** 2026-11-06 · **Status:** implemented in 0.5.0; live acceptance 2026-11-07 (see `docs/qa/`)
 **Builds on:** `2026-08-18-focusguard-design.md` (§11 is the current install and lock model)
 
 ## 1. Purpose
@@ -65,7 +65,7 @@ Pure functions in Core: `KeywordRule.matches(name:)`, `Config.keywordBlocks(name
 looked up that matched a rule, each with the time last seen. Only matches are stored, never
 general lookup history. Names never expire. Cap 2000; when exceeded, the oldest-seen names are
 evicted, and only while no window with keyword rules is active, so eviction never unblocks
-something mid-window.
+something mid-window. The cap is hard: when the set is full, a new match evicts the oldest-seen 5 % first; a genuinely learned name evicted this way is re-learned on its next lookup. Names currently rendered into the hosts region are spared: a blocked name never produces a lookup (hosts answers it), so its last-seen time freezes while unblocked names keep refreshing, and without this the drop would take exactly the enforced names mid-window. The daemon passes the set it rendered last tick; eviction takes the oldest unprotected names first and falls back to oldest overall only when every name is protected, with the key breaking ties so the order is deterministic.
 
 Each tick the blocked domain set is `explicit domains ∪ { n ∈ learned : keywordBlocks(n) }`,
 rendered into the hosts region exactly like explicit domains (`0.0.0.0`/`::`, `www.` form).
@@ -85,12 +85,12 @@ name in v1; an `alwaysAllow` entry is how a wrongly caught site is released.
 - Framing handled: `DLT_EN10MB` (14-byte Ethernet header) and `DLT_NULL` (4-byte family word,
   used by `utun`). IPv4 and IPv6. TCP DNS is ignored (rare; large answers only).
 - The DNS question name is parsed from the packet by a pure Core function
-  (`DNSQuestion.parse(frame:linkType:) -> [String]`), tested against byte fixtures. Compressed
+  (`DNSQuestion.names(in:link:) -> [String]`), tested against byte fixtures. Compressed
   labels and malformed packets are rejected, never trusted.
 - On a match: record in `learned`, rewrite the hosts region now (not at the next tick) and flush
   the DNS cache, so the gap is one lookup, not up to 30 s.
-- Interface changes (Wi-Fi join, VPN up/down) arrive through `SCDynamicStore` notifications for
-  `State:/Network/Interface`; captures are reopened then. No polling.
+- Interface changes (Wi-Fi join, VPN up/down) arrive through `NWPathMonitor` (event-driven, same semantics as
+  `SCDynamicStore` notifications for `State:/Network/Interface`); captures are reopened then. No polling.
 - Watching is independent of windows so that a site seen on Tuesday is already known when
   Wednesday's window opens; this is what closes the first-visit gap in practice.
 
@@ -125,7 +125,8 @@ explicit domains and apps keep working; only keyword rules are inert, and the ap
   (Contains, Whole word, Starts with, Ends with); add/remove buttons; under each row a
   secondary line "Blocked so far: a.com, b.org" (from `learned.json`, up to ~10 names then
   "+N more").
-- **Always allow** list at the bottom of the Block Lists tab: site names, add/remove.
+- **Always allow** list, shown as a section in each list's detail form and labelled "(all
+  lists)" because it is global: site names, add/remove.
 - All edits go through the existing gate (`AppModel.apply`), so Friction and Impossible apply
   as §6 says. Validation in the editor: lowercase, strip spaces, reject `text` outside
   `[a-z0-9-]{2,63}` with an inline message.
@@ -133,7 +134,8 @@ explicit domains and apps keep working; only keyword rules are inert, and the ap
 ## 9. Battery
 
 One kernel-filtered wake per outbound DNS question while keyword rules exist (~50 µs; a busy
-day of 20,000 lookups ≈ 1 s CPU). Nothing periodic. Hosts rewrites happen only on a new match.
+day of 20,000 lookups ≈ 1 s CPU in the estimate; measured 4.4 s over five hours with seven
+interfaces watched, ≈ 20 s a day). Nothing periodic. Hosts rewrites happen only on a new match.
 With no keyword rules, no device is opened.
 
 ## 10. Testing

@@ -56,6 +56,11 @@ struct BlockListDetail: View {
 
     @State private var name = ""
     @State private var newDomain = ""
+    @State private var newKeyword = ""
+    @State private var newMatch: KeywordRule.Match = .contains
+    @State private var keywordHint: String?
+    @State private var newAllow = ""
+    @State private var allowHint: String?
     @State private var showAddApp = false
     @FocusState private var nameFocused: Bool
     /// Bumped on every refused edit; `.id(refused)` rebuilds the form from the saved config.
@@ -97,6 +102,45 @@ struct BlockListDetail: View {
                 }
             }
 
+            Section {
+                ForEach(uniqueRules(list.keywords)) { rule in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(rule.text).font(.system(.body, design: .monospaced))
+                            Picker("", selection: Binding(
+                                get: { rule.match },
+                                set: { m in commit { $0.update(list: list.id) { l in
+                                    if let i = l.keywords.firstIndex(where: { $0.id == rule.id }) { l.keywords[i].match = m }
+                                } } }
+                            )) {
+                                ForEach(KeywordRule.Match.allCases, id: \.self) { Text($0.title).tag($0) }
+                            }
+                            .labelsHidden().frame(width: 130)
+                            .disabled(removalsLocked)
+                            Spacer()
+                            removeButton { commit { $0.update(list: list.id) { $0.keywords.removeAll { $0.id == rule.id } } } }
+                        }
+                        let caught = model.learnedNames(for: rule)
+                        Text(caught.isEmpty ? "Blocked so far: none yet"
+                             : "Blocked so far: " + caught.prefix(10).joined(separator: ", ") + (caught.count > 10 ? " +\(caught.count - 10) more" : ""))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    TextField("Add a keyword, e.g. manga", text: $newKeyword).onSubmit(addKeyword)
+                    Picker("", selection: $newMatch) {
+                        ForEach(KeywordRule.Match.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().frame(width: 130)
+                    Button("Add", action: addKeyword).disabled(newKeyword.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let hint = keywordHint { Text(hint).font(.caption).foregroundStyle(.red) }
+            } header: {
+                Text("Keywords")
+            } footer: {
+                Text("Matches site names only (mangadex.org, not reddit.com/r/manga). Sites are learned as your Mac looks them up and blocked from then on. Whole word, starts with and ends with look at the parts of the name between dots and hyphens.")
+            }
+
             Section("Apps") {
                 ForEach(unique(list.appBundleIDs), id: \.self) { id in
                     let entry = InstalledApps.entry(forBundleID: id)
@@ -111,6 +155,27 @@ struct BlockListDetail: View {
                     }
                 }
                 Button("Add app…") { showAddApp = true }
+            }
+
+            Section {
+                ForEach(unique(model.config?.alwaysAllow ?? []), id: \.self) { site in
+                    HStack {
+                        Text(site)
+                        Spacer()
+                        // Removing an allow entry only ever blocks more, so it is never locked.
+                        Button(role: .destructive) { commit { $0.alwaysAllow.removeAll { $0 == site } } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                HStack {
+                    TextField("Never block this site, e.g. mangalore.in", text: $newAllow).onSubmit(addAllow)
+                    Button("Allow", action: addAllow).disabled(newAllow.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let hint = allowHint { Text(hint).font(.caption).foregroundStyle(.red) }
+            } header: {
+                Text("Always allow (all lists)")
+            } footer: {
+                Text("Keyword rules never block these sites or their subdomains. Sites you list by name are still blocked. Adding an entry while a keyword window is active counts as loosening it.")
             }
         }
         .formStyle(.grouped)
@@ -148,6 +213,11 @@ struct BlockListDetail: View {
         return items.filter { seen.insert($0).inserted }
     }
 
+    private func uniqueRules(_ rules: [KeywordRule]) -> [KeywordRule] {
+        var seen = Set<UUID>()
+        return rules.filter { seen.insert($0.id).inserted }
+    }
+
     private func commitName() {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { name = list.name; return }
@@ -168,5 +238,29 @@ struct BlockListDetail: View {
         domainHint = nil
         commit { $0.update(list: list.id) { if !$0.domains.contains(d) { $0.domains.append(d) } } }
         newDomain = ""
+    }
+
+    private func addKeyword() {
+        let typed = newKeyword
+        guard let text = KeywordRule.normalize(typed) else {
+            keywordHint = "A keyword is one word of 2–63 letters, digits or hyphens, like manga or read-manga."
+            return
+        }
+        keywordHint = nil
+        let rule = KeywordRule(text: text, match: newMatch)
+        commit { $0.update(list: list.id) { l in if !l.keywords.contains(where: { $0.itemKey == rule.itemKey }) { l.keywords.append(rule) } } }
+        newKeyword = ""
+    }
+
+    private func addAllow() {
+        let typed = newAllow.trimmingCharacters(in: .whitespaces)
+        let site = DomainNormalizer.normalize(typed)
+        guard !site.isEmpty else {
+            allowHint = "\u{201C}\(typed)\u{201D} is not a web address. Use the site\u{2019}s domain, like mangalore.in."
+            return
+        }
+        allowHint = nil
+        commit { if !$0.alwaysAllow.contains(site) { $0.alwaysAllow.append(site) } }
+        newAllow = ""
     }
 }

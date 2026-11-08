@@ -45,4 +45,14 @@ final class DomainsTests: XCTestCase {
         XCTAssertEqual(DomainNormalizer.normalize("https://user@reddit.com/"), "reddit.com")
         XCTAssertEqual(DomainNormalizer.normalize(".reddit.com"), "reddit.com")
     }
+
+    func testIsHostname() {
+        XCTAssertTrue(DomainNormalizer.isHostname("mangaplus.shueisha.co.jp"))
+        XCTAssertTrue(DomainNormalizer.isHostname("a-b.c"))
+        XCTAssertFalse(DomainNormalizer.isHostname("localhost"))
+        XCTAssertFalse(DomainNormalizer.isHostname("a b.com"))
+        XCTAssertFalse(DomainNormalizer.isHostname("a.com\n"))
+        XCTAssertFalse(DomainNormalizer.isHostname(".a.com"))
+        XCTAssertFalse(DomainNormalizer.isHostname("a..com"))
+    }
 }

@@ -49,4 +49,12 @@ extension Config {
     public func activeSet(at moment: LocalMoment) -> ActiveSet {
         items(ofLists: schedules.filter { $0.isActive(at: moment) }.flatMap(\.blockListIDs))
     }
+
+    /// The active set plus every learned name a keyword rule blocks right now.
+    public func activeSet(at moment: LocalMoment, learned: Set<String>) -> ActiveSet {
+        var set = activeSet(at: moment)
+        let matcher = KeywordMatcher(config: self, at: moment)
+        set.domains.formUnion(learned.filter(matcher.blocks))
+        return set
+    }
 }

@@ -15,6 +15,8 @@ public final class Reconciler {
         public var clockTampered: Bool
         /// The zone schedule matching used: the system's, unless a change is being held back.
         public var timeZone: String
+        /// Some enabled list has keyword rules: the daemon should be observing lookups.
+        public var keywordWatchWanted: Bool
     }
 
     private let hosts: HostsFileStore
@@ -38,12 +40,20 @@ public final class Reconciler {
     private var hostsFailing = false
     /// pid → monotonic deadline for SIGKILL; `.infinity` once SIGKILL has been sent (waiting for it to disappear).
     private var pendingKill: [Int32: TimeInterval] = [:]
+    /// Names seen looked up that matched a keyword rule. Persisted by the daemon.
+    public private(set) var learned: LearnedNames
+    /// What the last tick enforced, so `observe` can judge a name between ticks.
+    private var lastEffective: Config?
+    /// The learned names the last tick rendered into the hosts region. A name in /etc/hosts is
+    /// never looked up again, so its last-seen time freezes; `record` spares these when the cap
+    /// forces an eviction, or the drop would take exactly the names being enforced.
+    private var lastRenderedLearned: Set<String> = []
 
     public init(hosts: HostsFileStore, dns: DNSCacheFlusher, processes: ProcessController, log: ReconcilerLog,
                 clockGuard: ClockGuard = ClockGuard(), clockState: ClockGuard.State? = nil,
                 killGrace: TimeInterval = 3,
                 resolver: ConfigResolver = ConfigResolver(), calendar: Calendar = .current,
-                zone: TimeZone? = nil) {
+                zone: TimeZone? = nil, learned: LearnedNames = LearnedNames()) {
         self.hosts = hosts
         self.dns = dns
         self.processes = processes
@@ -53,6 +63,7 @@ public final class Reconciler {
         self.killGrace = killGrace
         self.resolver = resolver
         self.calendar = calendar
+        self.learned = learned
         if let zone { self.calendar.timeZone = zone }
     }
 
@@ -86,7 +97,14 @@ public final class Reconciler {
             case .held: log.error("config.json refused: it would unblock something an Impossible window protects; still enforcing the accepted config until that window ends")
             }
         }
-        let active = config.activeSet(at: moment)
+        lastEffective = config
+        if learned.count > LearnedNames.cap, config.keywordRules(activeAt: moment).isEmpty {
+            learned.evictBeyondCap()
+        }
+        let matcher = KeywordMatcher(config: config, at: moment)
+        lastRenderedLearned = learned.names.filter(matcher.blocks)
+        var active = config.activeSet(at: moment)
+        active.domains.formUnion(lastRenderedLearned)
 
         let hostsChanged = reconcileHosts(domains: active.domains)
         let (terminated, killed) = reconcileApps(bundleIDs: active.bundleIDs, monotonic: clock.monotonic)
@@ -94,7 +112,8 @@ public final class Reconciler {
         return Result(activeSet: active, source: source, hostsChanged: hostsChanged,
                       terminated: terminated, killed: killed,
                       trusted: step.trusted, clockTampered: step.tampered,
-                      timeZone: calendar.timeZone.identifier)
+                      timeZone: calendar.timeZone.identifier,
+                      keywordWatchWanted: config.hasKeywordRules)
     }
 
     private func adoptZoneIfAllowed(_ systemZone: TimeZone?, trusted: Date) {
@@ -118,6 +137,19 @@ public final class Reconciler {
     public func teardown() {
         _ = reconcileHosts(domains: [])
         pendingKill.removeAll()
+    }
+
+    /// A site name the Mac just looked up. Returns true when it is a new match worth acting on:
+    /// the daemon then runs a tick at once so the hosts region catches it without waiting.
+    /// Judged against what the last tick enforced (so a held proposal cannot widen learning).
+    @discardableResult
+    public func observe(name rawName: String, wall: Date) -> Bool {
+        let name = rawName.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !name.isEmpty, !name.hasSuffix(".arpa"), !name.hasSuffix(".local"),
+              let config = lastEffective, config.shouldLearn(name: name) else { return false }
+        let isNew = learned.record(name, at: wall, protected: lastRenderedLearned)
+        if isNew { log.info("learned \(name)") }
+        return isNew
     }
 
     private func reconcileHosts(domains: Set<String>) -> Bool {

@@ -29,6 +29,14 @@ func check() {
     }
     print("domains: \(active.domains.sorted().joined(separator: " "))")
     print("apps:    \(active.bundleIDs.sorted().joined(separator: " "))")
+    // What a write would be judged against: the strictest active window protects its items until
+    // the active stretch ends (Lock.swift). "lock: none" means any edit is accepted right now.
+    let lock = config.lockState(at: moment)
+    if let mode = lock.overall {
+        print("lock:    \(mode.rawValue) until \(lock.lockedUntil?.string ?? "the schedule has no gap all week")")
+    } else {
+        print("lock:    none")
+    }
 }
 
 func requireRoot() {

@@ -17,6 +17,10 @@ final class Daemon {
     private var lastSavedClockState: ClockGuard.State?
     private var lastSavedStatus: DaemonStatus?
     private var lastSavedZone: String?
+    private let watcher: DNSWatcher
+    private var lastSavedLearned: LearnedNames?
+    private var lastLearnedSave: Date = .distantPast
+    private var tickPending = false
 
     init() {
         do {
@@ -27,6 +31,8 @@ final class Daemon {
         lastSavedClockState = ConfigFile.loadClockState()
         lastSavedLastGood = ConfigFile.loadLastGood()
         lastSavedZone = ConfigFile.loadTimeZone()
+        lastSavedLearned = ConfigFile.loadLearned()
+        watcher = DNSWatcher(log: log)
         reconciler = Reconciler(
             hosts: EtcHostsStore(path: Paths.hosts),
             dns: DSCacheFlusher(),
@@ -34,7 +40,9 @@ final class Daemon {
             log: log,
             clockState: lastSavedClockState,
             resolver: ConfigResolver(lastGood: lastSavedLastGood),
-            zone: lastSavedZone.flatMap(TimeZone.init(identifier:)))
+            zone: lastSavedZone.flatMap(TimeZone.init(identifier:)),
+            learned: lastSavedLearned ?? LearnedNames())
+        watcher.onName = { [weak self] name in self?.observed(name) }
     }
 
     /// One reconcile pass. Safe to call from `once` or from the timer.
@@ -50,6 +58,21 @@ final class Daemon {
         if result.timeZone != lastSavedZone, ConfigFile.saveTimeZone(result.timeZone) {
             lastSavedZone = result.timeZone
         }
+        // Only the long-running daemon watches; `once` must never open BPF devices.
+        if result.keywordWatchWanted, timer != nil, !watcher.isRunning {
+            watcher.start()
+        } else if !result.keywordWatchWanted, watcher.isRunning {
+            watcher.stop()
+        }
+        // `record` refreshes lastSeen on every repeat lookup, so "changed" alone would rewrite the
+        // file every tick: save when the set of names changes, or at most every 10 minutes otherwise.
+        let learnedNow = reconciler.learned
+        if learnedNow != lastSavedLearned,
+           learnedNow.names != lastSavedLearned?.names ?? [] || Date().timeIntervalSince(lastLearnedSave) > 600,
+           ConfigFile.saveLearned(learnedNow) {
+            lastSavedLearned = learnedNow
+            lastLearnedSave = Date()
+        }
         // The anchor changes rarely (first run, reboot, 24 h reconverge), so this almost never writes.
         if let state = reconciler.clockState, state != lastSavedClockState {
             ConfigFile.saveClockState(state)
@@ -59,7 +82,7 @@ final class Daemon {
         let status = DaemonStatus(
             pid: getpid(), source: result.source,
             clockOffsetSeconds: DaemonStatus.publishedOffset(trusted: result.trusted, wall: clock.wall, tampered: result.clockTampered),
-            clockTampered: result.clockTampered, timeZone: result.timeZone)
+            clockTampered: result.clockTampered, timeZone: result.timeZone, dnsWatch: watcher.state)
         if status != lastSavedStatus, ConfigFile.saveStatus(status) {
             lastSavedStatus = status
         }
@@ -67,6 +90,20 @@ final class Daemon {
             log.info("tick: source=\(result.source.rawValue) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count)")
         }
         reschedule(interval: result.activeSet.bundleIDs.isEmpty ? Self.idleTick : Self.activeTick)
+    }
+
+    /// A DNS question from the watcher. New matches are applied on the next run-loop turn,
+    /// once per turn however many arrive: never from inside the packet loop (which still holds
+    /// the capture handle a tick may close), and a page load that reveals several new names
+    /// costs one hosts rewrite, not one per name.
+    private func observed(_ name: String) {
+        guard reconciler.observe(name: name, wall: Date()), !tickPending else { return }
+        tickPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.tickPending = false
+            self.tick()
+        }
     }
 
     /// Wall-clock deadlines keep firing on schedule after sleep; a 2 s leeway still lets the kernel

@@ -85,6 +85,18 @@ enum ConfigFile {
         return writeRootFile(Paths.status, data, mode: 0o644)
     }
 
+    static func loadLearned() -> LearnedNames {
+        guard let data = FileManager.default.contents(atPath: Paths.learned),
+              let learned = try? JSONDecoder().decode(LearnedNames.self, from: data) else { return LearnedNames() }
+        return learned
+    }
+
+    @discardableResult
+    static func saveLearned(_ learned: LearnedNames) -> Bool {
+        guard let data = try? JSONEncoder().encode(learned) else { return false }
+        return writeRootFile(Paths.learned, data, mode: 0o644)
+    }
+
     /// Temp file + rename so a reader (the app watches status.json) never sees a partial file.
     /// The mode is set explicitly: `createFile` applies the umask to the attribute it is given.
     private static func writeRootFile(_ path: String, _ data: Data, mode: Int) -> Bool {

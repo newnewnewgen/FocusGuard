@@ -68,17 +68,72 @@ public struct TimeOfDay: Hashable, Comparable, Codable {
     }
 }
 
+/// A site-name pattern (keyword spec §2–3). `text` is kept normalized: lowercase, `[a-z0-9-]`,
+/// 2…63 characters — the characters that can appear in a site name.
+public struct KeywordRule: Codable, Equatable, Hashable, Identifiable {
+    public enum Match: String, Codable, CaseIterable, Hashable {
+        case contains, wholeWord, startsWith, endsWith
+
+        public var title: String {
+            switch self {
+            case .contains: return "Contains"
+            case .wholeWord: return "Whole word"
+            case .startsWith: return "Starts with"
+            case .endsWith: return "Ends with"
+            }
+        }
+    }
+
+    public var id: UUID
+    public var text: String
+    public var match: Match
+
+    public init(id: UUID = UUID(), text: String, match: Match = .contains) {
+        self.id = id
+        self.text = text
+        self.match = match
+    }
+
+    /// nil when `raw` cannot be a keyword.
+    public static func normalize(_ raw: String) -> String? {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard (2...63).contains(t.count),
+              t.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }) else { return nil }
+        return t
+    }
+
+    public var isValid: Bool { KeywordRule.normalize(text) == text }
+
+    /// The lock treats a rule as one item for as long as its text and match are unchanged.
+    public var itemKey: String { "\(match.rawValue):\(text)" }
+}
+
 public struct BlockList: Codable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
     public var domains: [String]
     public var appBundleIDs: [String]
+    public var keywords: [KeywordRule]
 
-    public init(id: UUID = UUID(), name: String, domains: [String] = [], appBundleIDs: [String] = []) {
+    public init(id: UUID = UUID(), name: String, domains: [String] = [], appBundleIDs: [String] = [],
+                keywords: [KeywordRule] = []) {
         self.id = id
         self.name = name
         self.domains = domains
         self.appBundleIDs = appBundleIDs
+        self.keywords = keywords
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, domains, appBundleIDs, keywords }
+
+    /// Files written before keyword rules existed have no `keywords` key.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        domains = try c.decode([String].self, forKey: .domains)
+        appBundleIDs = try c.decode([String].self, forKey: .appBundleIDs)
+        keywords = try c.decodeIfPresent([KeywordRule].self, forKey: .keywords) ?? []
     }
 }
 
@@ -153,11 +208,26 @@ public struct Config: Codable, Equatable {
     public var version: Int
     public var blockLists: [BlockList]
     public var schedules: [ScheduleWindow]
+    /// Site names (and their subdomains) that keyword rules never block. Explicit `domains`
+    /// entries still do: the allow list beats keyword rules only.
+    public var alwaysAllow: [String]
 
-    public init(version: Int = Config.currentVersion, blockLists: [BlockList] = [], schedules: [ScheduleWindow] = []) {
+    public init(version: Int = Config.currentVersion, blockLists: [BlockList] = [], schedules: [ScheduleWindow] = [],
+                alwaysAllow: [String] = []) {
         self.version = version
         self.blockLists = blockLists
         self.schedules = schedules
+        self.alwaysAllow = alwaysAllow
+    }
+
+    private enum CodingKeys: String, CodingKey { case version, blockLists, schedules, alwaysAllow }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        blockLists = try c.decode([BlockList].self, forKey: .blockLists)
+        schedules = try c.decode([ScheduleWindow].self, forKey: .schedules)
+        alwaysAllow = try c.decodeIfPresent([String].self, forKey: .alwaysAllow) ?? []
     }
 
     public static let empty = Config()
@@ -187,20 +257,25 @@ public struct Config: Codable, Equatable {
         /// Across all lists.
         public static let maxDomains = 2000
         public static let maxApps = 300
+        /// Across all lists.
+        public static let maxKeywords = 200
+        public static let maxAllow = 500
     }
 
     public enum ValidationError: LocalizedError, Equatable {
-        case tooLarge(String), duplicateID(String)
+        case tooLarge(String), duplicateID(String), invalidKeyword(String)
         public var errorDescription: String? {
             switch self {
             case .tooLarge(let what): return "Config too large: \(what)."
             case .duplicateID(let what): return "Two \(what) share one id."
+            case .invalidKeyword(let text): return "\u{201C}\(text)\u{201D} is not a valid keyword (2–63 letters, digits or hyphens)."
             }
         }
     }
 
     /// IDs must be unique: with two windows sharing an ID, "is this window still protecting its
     /// items?" has no single answer, which was once enough to slip a weakening past the lock.
+    /// Keyword rule ids are unique across all lists: the app keys learned names by rule id.
     public func validate() throws {
         guard schedules.count <= Limits.maxWindows else { throw ValidationError.tooLarge("\(schedules.count) windows; the limit is \(Limits.maxWindows)") }
         guard blockLists.count <= Limits.maxLists else { throw ValidationError.tooLarge("\(blockLists.count) lists; the limit is \(Limits.maxLists)") }
@@ -210,5 +285,10 @@ public struct Config: Codable, Equatable {
         guard apps <= Limits.maxApps else { throw ValidationError.tooLarge("\(apps) apps; the limit is \(Limits.maxApps)") }
         guard Set(schedules.map(\.id)).count == schedules.count else { throw ValidationError.duplicateID("windows") }
         guard Set(blockLists.map(\.id)).count == blockLists.count else { throw ValidationError.duplicateID("lists") }
+        let keywords = blockLists.flatMap(\.keywords)
+        guard keywords.count <= Limits.maxKeywords else { throw ValidationError.tooLarge("\(keywords.count) keywords; the limit is \(Limits.maxKeywords)") }
+        if let bad = keywords.first(where: { !$0.isValid }) { throw ValidationError.invalidKeyword(bad.text) }
+        guard Set(keywords.map(\.id)).count == keywords.count else { throw ValidationError.duplicateID("keyword rules") }
+        guard alwaysAllow.count <= Limits.maxAllow else { throw ValidationError.tooLarge("\(alwaysAllow.count) allow entries; the limit is \(Limits.maxAllow)") }
     }
 }
