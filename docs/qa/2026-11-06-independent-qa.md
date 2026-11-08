@@ -185,3 +185,40 @@ The daemon logged 16 lines for the whole run: each refusal once, not once per ti
 Not exercised live (need admin authentication to attempt): changing the clock or the time zone
 during the window. Both are covered by unit tests (`ClockGuardTests`, `ReconcilerZoneTests`).
 
+## Live acceptance of keyword blocking (2026-11-07 16:16–21:20, this Mac, daemon 0.5.0)
+
+Daemon updated by `scripts/install-daemon.sh` (one password prompt). `status.json`:
+`version 0.5.0`, `dnsWatch: watching en0, utun0 … utun5` — the libpcap watcher's first real run.
+`learned.json` already held `play.pokemonshowdown.com` (16:15) and `mangadex.org` (16:17),
+caught by the user's own `manga` / `pokemonshowdown` rules from ordinary browsing, before any
+script ran.
+
+`scripts/verify-keywords.sh` took three attempts; the first two failed for script reasons that
+had been missed by two reviews, both fixed in 26310a8:
+
+1. **Precondition wrong.** The script required `source=live` and replaced the whole config; the
+   daemon refused the first write (`it would unblock something an Impossible window protects`)
+   because the user's own Impossible window was active, and `live` only means the *current*
+   config is accepted. Every later "pass" was vacuous. Now `focusguardd check` prints a `lock:`
+   line and the script requires `lock: none`.
+2. **Lookup before adoption.** The daemon reads `config.json` at its tick (30 s idle); the
+   script ran `dig` 5 s after writing the rule, so the question was matched against the previous
+   config and nothing was learned. Every write now carries a step-named sentinel domain and the
+   script waits for its `/etc/hosts` line before acting.
+3. `curl` right after the hosts rewrite still connected once: it raced the `killall -HUP
+   mDNSResponder` flush. The check now allows 10 s.
+
+Run at 21:12 (capture path): daemon log `hosts region updated` 21:12:51.180 (adopted) →
+`learned example.org` 21:12:51.532 (350 ms after `dig`) → `hosts region updated: 2 domain(s)`
+21:12:51.571. Run at 21:16, 13 checks, **ALL OK**: adopted within a tick; learned and in
+`/etc/hosts` within 5 s; stops resolving within 10 s; `learned.json` lists it; allow-list entry
+released it in the same tick and it was not re-learned; Impossible window re-blocked it; removing
+the rule → `source=held`, still blocked; user's config restored and taken up when the test window
+ended.
+
+Battery: daemon CPU **4.4 s over 4 h 57 m** with captures open on seven interfaces (≈0.025 %),
+against 72 s over 8 h 12 m for the 0.4.0 daemon earlier the same day.
+
+Still untested: `utun` capture actually carrying DNS (a VPN with its own resolver); a resolver on
+127.0.0.1 (documented as a gap); reboot.
+
