@@ -8,13 +8,20 @@ extension KeywordRule {
 
     /// `name` is a site name as looked up; case and a trailing dot are ignored.
     public func matches(name rawName: String) -> Bool {
-        guard isValid else { return false }
         let name = rawName.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return matches(normalized: name, words: Self.words(of: name))
+    }
+
+    /// The same test against a name already lowercased, trimmed and split, so a caller judging
+    /// one name against many rules (or many names against many rules, every tick) normalizes
+    /// each name once rather than once per rule.
+    public func matches(normalized name: String, words: [String]) -> Bool {
+        guard isValid else { return false }
         switch match {
         case .contains: return name.contains(text)
-        case .wholeWord: return Self.words(of: name).contains(text)
-        case .startsWith: return Self.words(of: name).contains { $0.hasPrefix(text) }
-        case .endsWith: return Self.words(of: name).contains { $0.hasSuffix(text) }
+        case .wholeWord: return words.contains(text)
+        case .startsWith: return words.contains { $0.hasPrefix(text) }
+        case .endsWith: return words.contains { $0.hasSuffix(text) }
         }
     }
 }
@@ -52,7 +59,9 @@ extension Config {
     public func shouldLearn(name: String) -> Bool {
         guard DomainNormalizer.isHostname(name.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return false }
         guard !isAlwaysAllowed(name) else { return false }
-        return allKeywordRules.contains { $0.matches(name: name) }
+        let host = name.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let words = KeywordRule.words(of: host)
+        return allKeywordRules.contains { $0.matches(normalized: host, words: words) }
     }
 }
 
@@ -83,7 +92,10 @@ public struct KeywordMatcher {
     }
 
     public func blocks(_ name: String) -> Bool {
-        guard !rules.isEmpty, !isAllowed(name) else { return false }
-        return rules.contains { $0.matches(name: name) }
+        guard !rules.isEmpty else { return false }
+        let host = Self.normalized(name)
+        guard !allowed.contains(where: { DomainNormalizer.host(host, isUnder: $0) }) else { return false }
+        let words = KeywordRule.words(of: host)
+        return rules.contains { $0.matches(normalized: host, words: words) }
     }
 }

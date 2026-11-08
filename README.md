@@ -87,7 +87,8 @@ match the **site name only** — never a page path, a search or a title, which H
 Whole word, starts with and ends with look at the parts of the name between dots and hyphens.
 
 While any enabled window's list has keyword rules, the daemon watches the Mac's outgoing DNS
-questions (a kernel filter wakes it for those alone; a busy day costs about a second of CPU).
+questions (a kernel filter wakes it for those alone; measured at 4.4 s of CPU over five hours with
+seven interfaces watched, about 20 s a day).
 A name that matches is learned, stored in `/var/db/FocusGuard/learned.json` and blocked from
 then on in every browser and app, during any window whose list has a matching rule. Only
 matches are stored, never your lookup history. The **Always allow** list stops keyword rules

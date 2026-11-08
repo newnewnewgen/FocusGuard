@@ -210,5 +210,8 @@ final class DNSWatcher {
         lastWanted = []
         updateState(wanted: [dead.interface])
         log.info("keyword watch: \(state)")
+        // A path event usually follows (the interface went away), but not always; retry once
+        // shortly so an interface that merely hiccupped is not left unwatched until the next one.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.reopen() }
     }
 }
