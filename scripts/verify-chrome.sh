@@ -36,9 +36,10 @@ source=$(field source)
 # window of yours is active, its items are protected until that active stretch ends, and this
 # script replaces your whole config, so it must run in a gap. `check` prints that lock state.
 cd "$(dirname "$0")/.." || exit 1
-swift build --product focusguardd 2>&1 | tail -1
+swift build --product focusguardd >/dev/null 2>&1 || { echo "build failed (swift build --product focusguardd)"; exit 1; }
 lock=$(.build/debug/focusguardd check | awk '/^lock:/ {sub(/^lock: */, ""); print}')
-[ "$lock" = none ] || { echo "your own config has an active window (lock: ${lock:-unknown}): replacing it with the test config would be refused as a weakening. Rerun in a gap of your schedule."; exit 1; }
+[ -n "$lock" ] || { echo "could not read lock state from focusguardd check"; exit 1; }
+[ "$lock" = none ] || { echo "your own config has an active window (lock: $lock): replacing it with the test config would be refused as a weakening. Rerun in a gap of your schedule."; exit 1; }
 pgrep -xq "Google Chrome" || { echo "start Google Chrome first (and keep it running); the Chrome-visible checks need it"; exit 1; }
 [ -f "$RECORD" ] && { echo "$RECORD exists: the daemon believes it holds URLBlocklist right now, so no window of yours with Chrome patterns may be active. Rerun in a gap."; exit 1; }
 # The daemon refuses a system key it did not write (spec §3), so the whole run would read
@@ -56,8 +57,14 @@ ostart=$(LC_ALL=C date -v-2M +%H:%M); oend=$start
 
 BACKUP=$(mktemp -t focusguard-config)
 cp "$CFG" "$BACKUP" 2>/dev/null || echo '{"version":1,"blockLists":[],"schedules":[]}' > "$BACKUP"
-# From here every exit, including an abort, puts your config back.
-trap 'cp "$BACKUP" "$CFG" 2>/dev/null; rm -f "$BACKUP"' EXIT
+# From here every exit, including an abort, puts your config back. An abort during the
+# Impossible step restores a config the daemon holds until the test window ends: say so.
+impossible_step=0
+restore() {
+    cp "$BACKUP" "$CFG" 2>/dev/null; rm -f "$BACKUP"
+    [ "$impossible_step" = 1 ] && echo "note: test window is Impossible until $end; the restored config is held until then, and the key is removed from both domains when it is taken up"
+}
+trap restore EXIT
 LIST=0C1C2D3E-0000-4000-8000-0000000000C1; WIN=0C1C2D3E-0000-4000-8000-0000000000C2
 # The daemon reads config.json only at its tick (30 s + 2 s leeway with no apps to watch), so
 # every write carries a sentinel domain named after the step; its line appearing in /etc/hosts
@@ -92,8 +99,9 @@ check "Chrome blocks the extension's options page" 'ask "Blocked too?"'
 echo "--- deleting the user copy: re-asserted next tick"
 # Your own domain needs no password. The daemon notices the copy is gone (userCopyPresent) and
 # calls apply again with the unchanged set: within 30 s + 2 s leeway with no apps to watch.
+# No check that the copy is gone right after: the daemon may re-assert it within milliseconds
+# if its tick lands just then, and either outcome is correct. The re-assert is what is judged.
 defaults delete com.google.Chrome URLBlocklist 2>/dev/null
-check "user copy deleted" 'user_absent'
 check "system copy untouched by that" 'sys_has "chrome://extensions/*"'
 check "user copy re-asserted within 35 s" 'wait_for "user_has chrome://extensions/\\*" 35'
 check "with both patterns" 'user_has "chrome-extension://$EXT/"'
@@ -104,14 +112,16 @@ write "$BOTH" basic over "$ostart" "$oend"
 check "daemon adopted the over window within a tick (hosts region released)" 'released both'
 check "URLBlocklist removed from the user domain in the same tick" 'wait_for user_absent 5'
 check "and from the system domain" 'sys_absent'
-check "status is off" '[ "$(field chrome)" = off ]'
-check "ownership record gone" '[ ! -f "$RECORD" ]'
+# status.json is written after the tick's writes land: allow a few seconds for both.
+check "status is off" 'wait_for "[ \"\$(field chrome)\" = off ]" 5'
+check "ownership record gone" 'wait_for "[ ! -f \"$RECORD\" ]" 5'
 echo "    status chrome: $(field chrome)"
 echo "    user domain now: $(user_domain)"
 echo "    Reload the chrome://extensions tab."
 check "chrome://extensions loads again" 'ask "Does the page load now?"'
 
 echo "--- Impossible holds a pattern"
+impossible_step=1
 write "$BOTH" impossible impossible "$start" "$end"
 check "daemon adopted the Impossible window within a tick" 'adopted impossible'
 check "both patterns back in the user domain within 5 s" 'wait_for "user_has chrome://extensions/\\*" 5 && user_has "chrome-extension://$EXT/"'
@@ -124,7 +134,8 @@ check "and in the system domain" 'sys_has "chrome://extensions/*"'
 check "status still applied (2 patterns" 'field chrome | grep -q "^applied (2 patterns"'
 
 echo "--- restore"
-cp "$BACKUP" "$CFG" && rm -f "$BACKUP" && trap - EXIT
+trap - EXIT; impossible_step=0
+cp "$BACKUP" "$CFG" && rm -f "$BACKUP"
 if [ "$(field source)" = held ]; then echo "note: test window is Impossible until $end; the key is removed from both domains when the restored config is taken up then"; else
 check "key removed from both domains within a tick" 'wait_for "user_absent && sys_absent" 35'; fi
 if [ $fail = 0 ]; then echo "ALL OK"; else echo "SOME CHECKS FAILED"; fi
