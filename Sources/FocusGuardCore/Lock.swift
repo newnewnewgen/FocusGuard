@@ -119,7 +119,6 @@ extension Config {
     private struct WindowItems {
         var set = ActiveSet.empty
         var keywords = Set<String>()
-        var chromeURLs = Set<String>()
     }
 
     private func itemsPerWindow() -> [WindowItems] {
@@ -128,7 +127,6 @@ extension Config {
         for list in blockLists {
             if perList[list.id] == nil { perList[list.id] = WindowItems(set: items(ofLists: [list.id])) }
             perList[list.id]!.keywords.formUnion(list.keywords.map(\.itemKey))
-            perList[list.id]!.chromeURLs.formUnion(list.chromeURLs.compactMap(ChromeURLPattern.normalize))
         }
         return schedules.map { w in
             var out = WindowItems()
@@ -136,8 +134,8 @@ extension Config {
                 guard let l = perList[id] else { continue }
                 out.set.domains.formUnion(l.set.domains)
                 out.set.bundleIDs.formUnion(l.set.bundleIDs)
+                out.set.chromeURLs.formUnion(l.set.chromeURLs)
                 out.keywords.formUnion(l.keywords)
-                out.chromeURLs.formUnion(l.chromeURLs)
             }
             return out
         }
@@ -153,7 +151,7 @@ extension Config {
             for d in items[i].set.domains { map["d:" + d] = max(map["d:" + d] ?? mode, mode) }
             for b in items[i].set.bundleIDs { map["a:" + b] = max(map["a:" + b] ?? mode, mode) }
             for k in items[i].keywords { map["k:" + k] = max(map["k:" + k] ?? mode, mode) }
-            for c in items[i].chromeURLs { map["c:" + c] = max(map["c:" + c] ?? mode, mode) }
+            for c in items[i].set.chromeURLs { map["c:" + c] = max(map["c:" + c] ?? mode, mode) }
         }
         return map
     }
