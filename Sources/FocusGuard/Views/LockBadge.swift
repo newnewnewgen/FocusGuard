@@ -30,3 +30,19 @@ struct ProtectionBadge: View {
         }
     }
 }
+
+/// The minus button on a list row: disabled, with the reason as its tooltip, while an active
+/// Impossible window protects the row. Block Lists uses it for real; the unlock-mode explainer
+/// shows the same view locked, so the preview follows the real control.
+struct RemoveButton: View {
+    let locked: Bool
+    let lockedHelp: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: .destructive, action: action) { Image(systemName: "minus.circle") }
+            .buttonStyle(.borderless)
+            .disabled(locked)
+            .help(locked ? lockedHelp : "Remove")
+    }
+}

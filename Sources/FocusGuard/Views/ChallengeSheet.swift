@@ -8,6 +8,9 @@ import SwiftUI
 struct ChallengeSheet: View {
     let challenge: PendingChallenge
     let dismiss: () -> Void
+    /// Rendered inline in the unlock-mode explainer: the captcha draws exactly as it would for
+    /// real, but the field takes no focus and the buttons do nothing.
+    let isPreview: Bool
 
     @State private var typed = ""
     @FocusState private var focused: Bool
@@ -16,9 +19,10 @@ struct ChallengeSheet: View {
     private static let padding: CGFloat = 20
     private let captcha: CaptchaText
 
-    init(challenge: PendingChallenge, dismiss: @escaping () -> Void) {
+    init(challenge: PendingChallenge, dismiss: @escaping () -> Void, isPreview: Bool = false) {
         self.challenge = challenge
         self.dismiss = dismiss
+        self.isPreview = isPreview
         captcha = CaptchaText(sentence: challenge.sentence, width: Self.width - 2 * Self.padding)
     }
 
@@ -39,6 +43,7 @@ struct ChallengeSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
                 .autocorrectionDisabled()
+                .disabled(isPreview)
                 .focused($focused)
                 .onChange(of: typed) { old, new in
                     if !Challenge.isSingleKeystroke(from: old, to: new) {   // paste / drop / dictation
@@ -49,15 +54,15 @@ struct ChallengeSheet: View {
             HStack {
                 Text(progress).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Cancel", action: dismiss).keyboardShortcut(.cancelAction)
+                Button("Cancel", action: dismiss).keyboardShortcut(.cancelAction).disabled(isPreview)
                 Button("Unlock") { challenge.onSuccess(); dismiss() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!matches)
+                    .disabled(isPreview || !matches)
             }
         }
         .padding(Self.padding)
         .frame(width: Self.width)
-        .onAppear { focused = true }
+        .onAppear { if !isPreview { focused = true } }
     }
 
     private var progress: String {

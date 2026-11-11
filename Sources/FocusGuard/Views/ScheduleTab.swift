@@ -40,6 +40,7 @@ struct WindowRow: View {
     /// Bumped on every refused edit; `.id(refused)` rebuilds the AppKit-backed controls (switch,
     /// segmented picker, date pickers) from the saved config so the refusal visibly snaps back.
     @State private var refused = 0
+    @State private var showHelp = false
 
     private var mode: UnlockMode? { model.mode(forWindow: window.id) }
     /// Impossible and active: only name, adding lists, and extending the end are allowed.
@@ -74,6 +75,11 @@ struct WindowRow: View {
                 Picker("Unlock", selection: binding(\.unlockMode)) {
                     ForEach(UnlockMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.pickerStyle(.segmented).frame(width: 220).disabled(hardLocked)
+                // Learning only; picking a segment stays one click. Stays enabled under Impossible.
+                Button { showHelp = true } label: { Image(systemName: "info.circle") }
+                    .buttonStyle(.borderless)
+                    .help("What the unlock modes do")
+                    .popover(isPresented: $showHelp, arrowEdge: .bottom) { UnlockModeHelp(mode: window.unlockMode) }
             }
             HStack(spacing: 10) {
                 Text("Lists:").foregroundStyle(.secondary)

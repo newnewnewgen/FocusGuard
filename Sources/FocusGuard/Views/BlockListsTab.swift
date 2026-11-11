@@ -232,10 +232,7 @@ struct BlockListDetail: View {
     }
 
     private func removeButton(_ action: @escaping () -> Void) -> some View {
-        Button(role: .destructive, action: action) { Image(systemName: "minus.circle") }
-            .buttonStyle(.borderless)
-            .disabled(removalsLocked)
-            .help(removalsLocked ? model.lockedUntilText : "Remove")
+        RemoveButton(locked: removalsLocked, lockedHelp: model.lockedUntilText, action: action)
     }
 
     /// Display order preserved, duplicates dropped: `ForEach(id: \.self)` needs unique IDs even
