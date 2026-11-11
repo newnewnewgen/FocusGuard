@@ -548,3 +548,5 @@ existing window; `openWindow` alone left it behind whatever was in front.
 - `AppModel`, `AppKiller` and `Installer` state mapping have no unit tests.
 - Keyword blocking: see 2026-11-06-keyword-blocking-design.md (implemented in 0.5.0).
 - Chrome pages: see 2026-11-11-chrome-pages-design.md (implemented in 0.6.0).
+- UI polish (2026-11-11): see 2026-11-11-ui-polish-design.md. The Status checklist of §10 became
+  a Setup sheet; the app no longer has an uninstall button; "Blocked so far" is gone.

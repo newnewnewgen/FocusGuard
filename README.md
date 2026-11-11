@@ -21,14 +21,16 @@ Apple Developer account, negligible battery cost. Design:
     ditto build/FocusGuard.app /Applications/FocusGuard.app
     open /Applications/FocusGuard.app
 
-The window opens on the Status tab. Click **Install protection…** and type your password
+The window opens with the **Setup** sheet. Click **Install protection…** and type your password
 once: that installs the daemon as root-owned files (`/Library/PrivilegedHelperTools/` and
-`/Library/LaunchDaemons/`) and adds FocusGuard to your login items. Ad-hoc signed; requires
-macOS 15.
+`/Library/LaunchDaemons/`) and adds FocusGuard to your login items. The sheet closes by itself
+once everything is green; **Status → Setup…** brings it back (that is where the login-item and
+Dock toggles live). Ad-hoc signed; requires macOS 15.
 
 After rebuilding, `ditto` the new bundle over the old one and reopen the app. If the daemon
-changed, Status shows **Background daemon needs updating** with an **Update…** button (one
-password prompt). Blocking continues with the old daemon until you do.
+changed, the Setup sheet opens by itself with **Background daemon needs updating** and an
+**Update…** button (one password prompt), and Status shows one orange row until you do.
+Blocking continues with the old daemon meanwhile.
 
 **Finding the app.** FocusGuard lives in the menu bar (shield icon). macOS silently hides
 menu-bar icons that do not fit, which on a notched MacBook with a busy menu bar is common, so
@@ -47,7 +49,7 @@ line, and `scripts/uninstall-daemon.sh` removes it. Then edit
 
 Each schedule window has an unlock mode. It governs anything that would unblock something
 while the window is active: removing a site or app, disabling or deleting the window,
-shortening it, lowering its mode, uninstalling.
+shortening it, lowering its mode.
 
 | Mode | What it takes to weaken an active window | Enforced by |
 |------|------------------------------------------|-------------|
@@ -164,10 +166,10 @@ until the next reboot:
 
     sudo launchctl bootout system/com.focusguard.daemon
 
-To remove it for good, **Settings → Status → Uninstall protection…** (password; gated by the
-unlock mode of any active window) or `scripts/uninstall-daemon.sh`. Both stop the daemon,
-delete its files and remove the FocusGuard lines from `/etc/hosts`. Your lists and schedule
-stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
+To remove it for good, run `scripts/uninstall-daemon.sh` (password). It stops the daemon,
+deletes its files and removes the FocusGuard lines from `/etc/hosts`. The app has no uninstall
+button; use the script. Your lists and schedule stay in `config.json`. Nothing else in
+`/etc/hosts` is ever modified.
 
 ## Known gaps
 

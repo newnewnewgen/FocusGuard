@@ -1,6 +1,6 @@
 # UI polish — design
 
-**Date:** 2026-11-11 · **Status:** approved in conversation
+**Date:** 2026-11-11 · **Status:** implemented; visual check pending
 **Builds on:** `2026-08-18-focusguard-design.md` §11, `2026-11-06-keyword-blocking-design.md` §8
 
 Six changes to the menu-bar app, all app-only: no daemon, config schema or lock change.

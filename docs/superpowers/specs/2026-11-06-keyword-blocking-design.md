@@ -72,8 +72,9 @@ rendered into the hosts region exactly like explicit domains (`0.0.0.0`/`::`, `w
 A name learned under one rule stays blocked under any rule that still matches it; if no active
 rule matches, it is simply not rendered.
 
-The app reads the file to show "Blocked so far: …" under each rule. No UI forgets a learned
-name in v1; an `alwaysAllow` entry is how a wrongly caught site is released.
+The app showed "Blocked so far: …" under each rule until 2026-11-11 (UI polish spec §5); the
+file is now read by the daemon only. No UI forgets a learned name in v1; an `alwaysAllow`
+entry is how a wrongly caught site is released.
 
 ## 5. Observing lookups (daemon)
 
@@ -125,6 +126,7 @@ explicit domains and apps keep working; only keyword rules are inert, and the ap
   (Contains, Whole word, Starts with, Ends with); add/remove buttons; under each row a
   secondary line "Blocked so far: a.com, b.org" (from `learned.json`, up to ~10 names then
   "+N more").
+  *Removed 2026-11-11 (UI polish spec §5).*
 - **Always allow** list, shown as a section in each list's detail form and labelled "(all
   lists)" because it is global: site names, add/remove.
 - All edits go through the existing gate (`AppModel.apply`), so Friction and Impossible apply

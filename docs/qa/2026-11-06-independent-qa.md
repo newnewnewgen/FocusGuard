@@ -239,3 +239,30 @@ someone else" path; a restart mid-window (record-based ownership); nobody logged
 `applied (N patterns)` with no mirror); a `defaults import` failure surfacing as
 `error: defaults import (user domain) exited 1: …` and the 30 s spawn backoff; uninstall with a
 key held.
+
+## UI polish — visual checks (pending)
+
+Nothing in the 2026-11-11 UI polish batch is testable beyond `ListOrderTests` and
+`SetupNeedTests`; the rest is checked by eye in the running app after `scripts/build-app.sh`
+and `ditto` to /Applications. To record here, with the build's commit:
+
+- **Lists:** drag a list above another in the Block Lists sidebar; the "Default" caption moves
+  with the first row; the move is never challenged, even during an active Impossible window;
+  a new window from the Schedule tab has only the first list ticked.
+- **Ghost row:** faint under the last window, full on hover (0.15 s fade), click adds a window;
+  with no windows it is fully visible with the "Add a window: …" caption; with no lists it is
+  disabled with "Create a block list first: …"; no "Add window" button or footer text remains.
+- **Explainer:** `info.circle` beside the unlock segments opens a popover preselected to the
+  window's mode; Friction shows the drawn captcha with a dead field and dead buttons; Impossible
+  shows "reddit.com" with a disabled minus whose tooltip says "Locked until 20:00" and a window
+  row with the lock badge; both follow light/dark appearance; the button still works under an
+  active Impossible window.
+- **Setup sheet:** appears over the window at launch when the daemon is not installed, needs
+  updating or is not running, and again on activating the app; Done is disabled until the
+  daemon row is green; the sheet closes itself ~1.5 s after the last shown step turns green;
+  opened from Status → "Setup…" in a healthy state it stays open; the login and Dock toggles
+  work from it; the keyword row shows only when a list in an enabled window has keyword rules.
+- **Status:** when healthy, only notices (if any), "Now" and the "Setup…" link; stopping the
+  daemon (`sudo launchctl bootout system/com.focusguard.daemon`, then undo with the sheet's
+  Reinstall…) puts one orange row at the top with a Setup… button; no "Uninstall protection…".
+- **Block Lists:** no "Blocked so far" caption under keyword rules.
