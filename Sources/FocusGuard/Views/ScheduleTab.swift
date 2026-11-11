@@ -5,25 +5,24 @@ struct ScheduleTab: View {
     @Environment(AppModel.self) private var model
 
     private var windows: [ScheduleWindow] { model.config?.schedules ?? [] }
+    private var lists: [BlockList] { model.config?.blockLists ?? [] }
+
+    /// The ghost row explains itself only when there is something to explain: no list to attach
+    /// (spec §6), or no window yet (the old empty-state text, spec §2).
+    private var ghostCaption: String? {
+        if lists.isEmpty { return "Create a block list first: a window blocks the lists attached to it." }
+        if windows.isEmpty { return "Add a window: the days and hours when your lists are blocked." }
+        return nil
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if windows.isEmpty {
-                ContentUnavailableView("No schedule yet", systemImage: "calendar",
-                                       description: Text("Add a window: the days and hours when your lists are blocked."))
-            } else {
-                List(windows) { w in
-                    WindowRow(window: w).padding(.vertical, 6)
-                }
+        List {
+            ForEach(windows) { w in
+                WindowRow(window: w).padding(.vertical, 6)
             }
-            Divider()
-            HStack {
-                Button("Add window") { addWindow() }
-                Spacer()
-                Text("Unlock mode controls how hard it is to weaken a window while it is active: Basic applies at once, Friction asks you to type a sentence, Impossible waits for the window to end.")
-                    .font(.caption).foregroundStyle(.secondary).frame(maxWidth: 380)
-            }
-            .padding()
+            GhostWindowRow(caption: ghostCaption, enabled: !lists.isEmpty, permanent: windows.isEmpty) { addWindow() }
+                .listRowSeparator(.hidden)
+                .padding(.vertical, 6)
         }
         .disabled(model.config == nil)
     }
