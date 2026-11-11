@@ -1,6 +1,6 @@
 # Chrome pages — design
 
-**Date:** 2026-11-11 · **Status:** approved in conversation; §3 to be settled by `scripts/probe-chrome-policy.sh` before the plan
+**Date:** 2026-11-11 · **Status:** approved; §3 settled by the probe on 2026-11-11 — **write both domains** (variant B)
 **Builds on:** `2026-08-18-focusguard-design.md` §11 (install and lock model), `2026-11-06-keyword-blocking-design.md` (list item types, Add many…)
 
 ## 1. Purpose
@@ -44,7 +44,9 @@ active windows, in sorted order, and makes Chrome's policy preference match it:
 The write happens only when the set differs from what was last written (same change-detection
 as the hosts region). Chrome is told nothing else: no `URLAllowlist`, no extension blocklist.
 
-**Where the preference is written is decided by the probe, not assumed.** `CFPreferences` has
+**Probe result (2026-11-11, `scripts/probe-chrome-policy.sh`):** a key added to the system domain was picked up by Chrome within 15 s without a reload; the same key *removed* was not noticed within 60 s. So the system domain alone would start windows on time and never end them. Decision: **write both domains** (second rule below).
+
+**Where the preference is written was decided by the probe, not assumed.** `CFPreferences` has
 two candidate domains, and they differ in what matters:
 
 | Domain | File | Who can change it without a password | Picked up live by Chrome? |
