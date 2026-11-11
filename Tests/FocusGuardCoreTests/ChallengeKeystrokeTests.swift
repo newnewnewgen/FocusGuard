@@ -58,7 +58,7 @@ final class DaemonStatusTests: XCTestCase {
     }
 
     func testRoundTripsThroughJSON() throws {
-        let status = DaemonStatus(pid: 42, source: .held, clockOffsetSeconds: -7200, clockTampered: true, timeZone: "America/Vancouver", dnsWatch: "watching en0")
+        let status = DaemonStatus(pid: 42, source: .held, clockOffsetSeconds: -7200, clockTampered: true, timeZone: "America/Vancouver", dnsWatch: "watching en0", chrome: "applied (2 patterns)")
         let data = try JSONEncoder().encode(status)
         XCTAssertEqual(try JSONDecoder().decode(DaemonStatus.self, from: data), status)
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"held\""))
@@ -67,5 +67,10 @@ final class DaemonStatusTests: XCTestCase {
     func testStatusWithoutDnsWatchDecodes() throws {
         let old = Data(#"{"clockOffsetSeconds":0,"clockTampered":false,"pid":1,"source":"live","timeZone":"UTC","version":"0.4.0"}"#.utf8)
         XCTAssertEqual(try JSONDecoder().decode(DaemonStatus.self, from: old).dnsWatch, "off")
+    }
+
+    func testStatusWithoutChromeDecodes() throws {
+        let old = Data(#"{"clockOffsetSeconds":0,"clockTampered":false,"dnsWatch":"off","pid":1,"source":"live","timeZone":"UTC","version":"0.5.0"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(DaemonStatus.self, from: old).chrome, "off")
     }
 }

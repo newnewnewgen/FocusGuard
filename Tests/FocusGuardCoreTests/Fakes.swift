@@ -45,3 +45,31 @@ final class StubbornProcesses: ProcessController {
     func terminate(pid: Int32) { terminated.append(pid) }
     func kill(pid: Int32) { killed.append(pid) }
 }
+
+/// Stands in for Chrome's policy preference. `present` is what the key holds right now (nil =
+/// absent, whoever set it); `record` is what FocusGuard's ownership record says it last wrote.
+final class RecordingChromePolicyWriter: ChromePolicyWriter {
+    var present: [String]?
+    var record: [String]?
+    var applied: [[String]] = []
+    var clears = 0
+    var failWith: String?
+    var chromeInstalled = true
+
+    func recordedPatterns() -> [String]? { record }
+    func keyIsPresent() -> Bool { present != nil }
+    func apply(patterns: [String]) -> String? {
+        if let failWith { return failWith }
+        applied.append(patterns)
+        present = patterns
+        record = patterns
+        return nil
+    }
+    func clear() -> String? {
+        if let failWith { return failWith }
+        clears += 1
+        present = nil
+        record = nil
+        return nil
+    }
+}

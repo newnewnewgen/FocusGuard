@@ -17,12 +17,17 @@ public final class Reconciler {
         public var timeZone: String
         /// Some enabled list has keyword rules: the daemon should be observing lookups.
         public var keywordWatchWanted: Bool
+        /// "off", "applied (N patterns)", "applied (N patterns; Chrome not found)",
+        /// "not applied (…)" or "error: …" — `DaemonStatus.chrome` (chrome pages spec §5).
+        public var chrome: String
     }
 
     private let hosts: HostsFileStore
     private let dns: DNSCacheFlusher
     private let processes: ProcessController
     private let log: ReconcilerLog
+    /// nil in `check`-style and test contexts that never touch Chrome: status stays "off".
+    private let chrome: ChromePolicyWriter?
     private let clockGuard: ClockGuard
     private let killGrace: TimeInterval
     /// Schedule times are local times in this calendar's zone. The zone follows the system's,
@@ -48,8 +53,15 @@ public final class Reconciler {
     /// never looked up again, so its last-seen time freezes; `record` spares these when the cap
     /// forces an eviction, or the drop would take exactly the names being enforced.
     private var lastRenderedLearned: Set<String> = []
+    /// What this process (or, via the record, a previous one) last wrote to Chrome. nil: the
+    /// key is not ours. Change detection keys on this, as the hosts region keys on file contents.
+    private var chromeLastWritten: [String]?
+    private var chromeRecordRead = false
+    private var chromeForeignLogged = false
+    private var chromeFailing = false
 
     public init(hosts: HostsFileStore, dns: DNSCacheFlusher, processes: ProcessController, log: ReconcilerLog,
+                chrome: ChromePolicyWriter? = nil,
                 clockGuard: ClockGuard = ClockGuard(), clockState: ClockGuard.State? = nil,
                 killGrace: TimeInterval = 3,
                 resolver: ConfigResolver = ConfigResolver(), calendar: Calendar = .current,
@@ -58,6 +70,7 @@ public final class Reconciler {
         self.dns = dns
         self.processes = processes
         self.log = log
+        self.chrome = chrome
         self.clockGuard = clockGuard
         self.clockState = clockState
         self.killGrace = killGrace
@@ -109,11 +122,14 @@ public final class Reconciler {
         let hostsChanged = reconcileHosts(domains: active.domains)
         let (terminated, killed) = reconcileApps(bundleIDs: active.bundleIDs, monotonic: clock.monotonic)
 
+        let chromeStatus = reconcileChrome(patterns: active.chromeURLs.sorted())
+
         return Result(activeSet: active, source: source, hostsChanged: hostsChanged,
                       terminated: terminated, killed: killed,
                       trusted: step.trusted, clockTampered: step.tampered,
                       timeZone: calendar.timeZone.identifier,
-                      keywordWatchWanted: config.hasKeywordRules)
+                      keywordWatchWanted: config.hasKeywordRules,
+                      chrome: chromeStatus)
     }
 
     private func adoptZoneIfAllowed(_ systemZone: TimeZone?, trusted: Date) {
@@ -133,10 +149,12 @@ public final class Reconciler {
         }
     }
 
-    /// Remove our hosts region. Called on daemon shutdown.
+    /// Remove our hosts region and, if we wrote it, Chrome's URLBlocklist key. Called on daemon
+    /// shutdown.
     public func teardown() {
         _ = reconcileHosts(domains: [])
         pendingKill.removeAll()
+        _ = reconcileChrome(patterns: [])
     }
 
     /// A site name the Mac just looked up. Returns true when it is a new match worth acting on:
@@ -150,6 +168,55 @@ public final class Reconciler {
         let isNew = learned.record(name, at: wall, protected: lastRenderedLearned)
         if isNew { log.info("learned \(name)") }
         return isNew
+    }
+
+    /// Make Chrome's URLBlocklist equal `wanted` (sorted). Writes only when the set differs from
+    /// what was last written, and never touches a key it did not write: on first run with the
+    /// key already set and no record, it logs once and reports "not applied" (chrome pages spec §3).
+    private func reconcileChrome(patterns wanted: [String]) -> String {
+        guard let chrome else { return "off" }
+        if !chromeRecordRead {
+            chromeRecordRead = true
+            chromeLastWritten = chrome.recordedPatterns()
+        }
+        if wanted.isEmpty {
+            guard chromeLastWritten != nil else { return "off" }
+            if let reason = chrome.clear() { return chromeFailure(reason) }
+            chromeLastWritten = nil
+            chromeRecovered()
+            log.info("chrome policy removed")
+            return "off"
+        }
+        if chromeLastWritten == nil, chrome.keyIsPresent() {
+            if !chromeForeignLogged {
+                chromeForeignLogged = true
+                log.error("Chrome URLBlocklist is already set by someone else; leaving it alone")
+            }
+            return "not applied (URLBlocklist already set by someone else)"
+        }
+        if chromeLastWritten != wanted {
+            if let reason = chrome.apply(patterns: wanted) { return chromeFailure(reason) }
+            chromeLastWritten = wanted
+            chromeRecovered()
+            log.info("chrome policy updated: \(wanted.count) pattern(s)")
+        }
+        return "applied (\(wanted.count) patterns\(chrome.chromeInstalled ? "" : "; Chrome not found"))"
+    }
+
+    /// Latched like hosts failures: one error line per outage, not one per tick.
+    private func chromeFailure(_ reason: String) -> String {
+        if !chromeFailing {
+            chromeFailing = true
+            log.error("chrome policy write failed: \(reason)")
+        }
+        return "error: \(reason)"
+    }
+
+    private func chromeRecovered() {
+        if chromeFailing {
+            chromeFailing = false
+            log.info("chrome policy writes recovered")
+        }
     }
 
     private func reconcileHosts(domains: Set<String>) -> Bool {

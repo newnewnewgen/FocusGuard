@@ -23,6 +23,9 @@ public enum Paths {
     public static let timeZone = stateDir + "/time-zone"
     /// `LearnedNames`, 0644: names learned from lookups that matched a keyword rule.
     public static let learned = stateDir + "/learned.json"
+    /// Ownership record for Chrome's URLBlocklist key, 0644: the patterns the daemon last wrote,
+    /// so a restart can tell its own key from a user's. Absent when FocusGuard holds no key.
+    public static let chromePolicy = stateDir + "/chrome-policy.json"
     /// Where state lived before 0.4.0, inside the user-writable support dir; migrated once.
     public static let legacyStateDir = supportDir + "/state"
 
