@@ -18,7 +18,7 @@ window's current mode):
 - **Friction** — text: "While the window is active, weakening it (removing a site, ending it
   early, turning it off) first asks you to type a sentence. Paste and autocorrect do not work."
   Below it, the **real `ChallengeSheet`** rendered inline in demo mode with a fixed sample
-  sentence and a non-functional Continue button (`ChallengeSheet(challenge:dismiss:)` gets an
+  sentence and a non-functional Unlock button (`ChallengeSheet(challenge:dismiss:)` gets an
   `isPreview: Bool` that disables the field's effect and the buttons; the captcha canvas draws
   as it would for real).
 - **Impossible** — text: "While the window is active nothing can weaken it, not even you. Edits

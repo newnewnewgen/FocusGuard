@@ -327,7 +327,8 @@ public struct Config: Codable, Equatable {
 
     /// IDs must be unique: with two windows sharing an ID, "is this window still protecting its
     /// items?" has no single answer, which was once enough to slip a weakening past the lock.
-    /// Keyword rule ids are unique across all lists: the app keys learned names by rule id.
+    /// Keyword rule ids are unique across all lists too, so a rule is named unambiguously; the
+    /// names the daemon learns from them live in `LearnedNames`, keyed by hostname, not by rule.
     public func validate() throws {
         guard schedules.count <= Limits.maxWindows else { throw ValidationError.tooLarge("\(schedules.count) windows; the limit is \(Limits.maxWindows)") }
         guard blockLists.count <= Limits.maxLists else { throw ValidationError.tooLarge("\(blockLists.count) lists; the limit is \(Limits.maxLists)") }

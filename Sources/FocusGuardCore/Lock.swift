@@ -8,7 +8,7 @@ public struct LockState: Equatable {
     public var listModes: [UUID: UnlockMode] = [:]
     /// Active windows → their own mode.
     public var windowModes: [UUID: UnlockMode] = [:]
-    /// Strictest mode of any active window; gates quitting the app and uninstalling.
+    /// Strictest mode of any active window; gates quitting the app.
     public var overall: UnlockMode? = nil
     /// The time of day at which the current active stretch ends, searching a week ahead (so for a
     /// stretch longer than a day it is the time on a later day). nil when nothing is active; nil
