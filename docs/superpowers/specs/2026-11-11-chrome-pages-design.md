@@ -64,27 +64,68 @@ Decision rule:
   the daemon writes the system domain only. Chrome pages then carry the same guarantee as the
   hosts region: changing them under an Impossible window needs `sudo`.
 - **Otherwise:** the daemon writes **both** — the system domain as the durable copy, the user
-  domain as the one Chrome watches. The user-domain write is done as the console user (the
-  daemon runs `launchctl asuser <uid> sudo -n -u <name> /usr/bin/defaults …`), because cfprefsd
-  keys the user domain by uid. Deleting the user copy makes Chrome reload policy, which still
-  finds the system copy. **Every tick while patterns are active** the daemon checks that the
-  console user's `~/Library/Preferences/com.google.Chrome.plist` still holds the key
-  (`ChromePolicyWriter.userCopyPresent()`: the file is parsed once per distinct mtime+size, so
-  an unchanged file is one `stat`); if it does not, the daemon calls `apply` again with the
-  unchanged set and logs `chrome: user copy was removed; re-asserted` once per episode (a
-  loop deleting it every tick is one episode; the line repeats only after a tick has found the
-  copy in place again). The tick is 2 s while an app block is active and 30 s otherwise, so
-  the copy is back within 2 s or within 30 s respectively. With no console user there is
-  nothing to re-assert; the next tick after someone logs in sees their file. README states
-  this under *How enforcement works* and *Known gaps*: a determined loop can keep deleting
-  the preference, which the hosts region cannot suffer.
+  domain as the one Chrome watches. The user-domain write is done as the console user, because
+  cfprefsd keys the user domain by uid: the daemon writes the patterns as an XML plist
+  `{"URLBlocklist": [...]}` to `/var/db/FocusGuard/chrome-user-import.plist` (root-owned, 0644)
+  and runs `launchctl asuser <uid> /usr/bin/sudo -n -H -u '#<uid>' /usr/bin/defaults import
+  com.google.Chrome /var/db/FocusGuard/chrome-user-import.plist`; removal is the same prefix
+  with `defaults delete com.google.Chrome URLBlocklist`. `launchctl asuser` only switches the
+  Mach bootstrap context (the child would still be root), so `sudo -n -u` — root to user, no
+  password — makes it the user's own write, with `-H` so `defaults` sees that user's home.
+  `import`, not `write -array`: `write` parses each element as a plist literal and rejects legal
+  patterns containing `( ) { } [ ] < > "` or a comma ("Could not parse"), which would be retried
+  every tick with status stuck on error; `import` takes a real plist, writes the strings
+  exactly, and merges into the domain, leaving the user's other Chrome keys as they were.
+
+  Deleting the user copy makes Chrome reload policy, which still finds the system copy.
+  **Every tick while patterns are active** the daemon checks that the console user's
+  `~/Library/Preferences/com.google.Chrome.plist` still holds the key
+  (`ChromePolicyWriter.userCopyPresent()`); if it does not, the daemon calls `apply` again
+  with the unchanged set and logs `chrome: user copy was removed; re-asserted` once per
+  episode (a loop deleting it every tick is one episode; the line repeats only after a tick
+  has found the copy in place again). The tick is 2 s while an app block is active and 30 s
+  otherwise, so the copy is back within 2 s or within 30 s respectively. With no console user
+  there is nothing to re-assert (`userCopyPresent` is true, and the user-domain step of
+  `apply` is a success with nothing to mirror, so status reads `applied (N patterns)`); the
+  first tick after someone logs in sees their file and re-asserts. README states this under
+  *How enforcement works* and *Known gaps*: a determined loop can keep deleting the
+  preference, which the hosts region cannot suffer.
+
+  **That check is a root process reading a file the user controls**, so it never uses
+  `FileManager.contents(atPath:)` (follows a symlink anywhere; blocks forever on a FIFO — a
+  `mkfifo` at that path would stop every tick, SIGTERM handling included). `BoundedUserFile`
+  in Core opens with `O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC`, `fstat`s the descriptor, and
+  requires a regular file owned by that uid of at most 1 MiB, then reads at most that size from
+  the same descriptor. A missing file is "absent" (re-assert). Anything refused — symlink,
+  FIFO, device, oversize, wrong owner — is "cannot tell", which counts as **present**: a
+  planted file never causes a write; it is logged once per distinct reason. The parse is
+  cached on the opened file's identity (device, inode, mtime, size), so an unchanged file
+  costs one open + fstat per tick.
 
 In both cases the daemon uses `CFPreferencesSetValue` + `CFPreferencesSynchronize` from Core
 Foundation for the system domain (no shelling out), and records what it wrote in
-`/var/db/FocusGuard/chrome-policy.json` so a restart can tell its own key from a user's. The
-record is saved **before** either domain is touched: it is the intent, and a record with no
-key behind it is harmless (clearing an absent key is a no-op), whereas a key with no record
-would read as someone else's forever.
+`/var/db/FocusGuard/chrome-policy.json` (`ChromePolicyRecord`: `patterns`, `writtenAt`, and the
+`uid` and `name` whose domain holds the mirror) so a restart can tell its own key from a
+user's and remove the mirror from the user it wrote it for. The record is saved **before**
+either domain is touched: it is the intent, and a record with no key behind it is harmless
+(clearing an absent key is a no-op), whereas a key with no record would read as someone
+else's forever. A record that exists but cannot be decoded is still ours (contents unknown):
+`recordedPatterns()` returns an empty set, so the next `apply` or `clear` replaces it rather
+than treating the key as foreign. The record and the import plist are written temp-file +
+`fsync` + `rename`.
+
+Removal (`clear`) deletes the system key, then the mirror from the **recorded** user's domain
+(the console user's only for a record from before the field existed; with neither, nothing
+was mirrored). `defaults delete` exits 1 both when the key was already absent and when it
+failed, so the exit code proves nothing: after it the daemon forgets its parse cache and reads
+that user's plist under the bounded guard, and only unlinks the record once the key is absent.
+If it is still there — or cannot be read — the reason (with the first line of the child's
+stderr) goes to status and the record stays, so the next tick retries; a blocklist is never
+orphaned in a user's Chrome. `apply` with a record naming a *different* uid than the console
+user first removes that user's mirror the same way, before writing the new record; if that
+removal fails the tick reports it and nothing else is written, so the record keeps naming the
+user whose copy is still out there. `scripts/uninstall-daemon-root.sh` reads the uid from the
+record and falls back to the console user.
 
 **The daemon never writes the key when it has nothing to block and never wrote it before**, so
 a user who sets `URLBlocklist` themselves for other reasons is not clobbered: on first run, if
@@ -111,7 +152,11 @@ interaction (nothing learns, nothing is uncovered).
 `DaemonStatus` gains `chrome: String` — `"off"` (no patterns in any enabled window's list),
 `"applied (N patterns)"`, `"applied (N patterns; Chrome not found)"`, `"not applied (…)"`, or
 `"error: <reason>"`. The Status tab shows it as "Chrome pages: …". Decoding a status without the
-key yields `"off"`.
+key yields `"off"`. No console user (login window, nobody logged in) is not an error: the
+system copy is in place and there is no one to mirror for, so status reads `applied (N
+patterns)`. A failed user-domain child reports its exit status and the first line of its
+stderr (`error: defaults import (user domain) exited 1: Could not parse …`), so an `exited 1`
+is diagnosable from status alone.
 
 ## 6. App
 
@@ -132,19 +177,28 @@ key yields `"off"`.
 ## 7. Battery
 
 Outside a window nothing is added: no check, no write. While patterns are active each tick
-costs one `stat` of the console user's `com.google.Chrome.plist` (the parse is cached by
-mtime+size, so it is repeated only when the file changes) plus one `SCDynamicStoreCopyConsoleUser`
-call. The plist write happens when the active pattern set changes (window start/end, edit) or
-the user copy was deleted; `CFPreferencesSynchronize` is a cfprefsd round trip, microseconds,
-and the user-domain mirror is one short-lived `defaults` process per write.
+costs one open + `fstat` of the console user's `com.google.Chrome.plist` (the parse is cached
+by the file's device, inode, mtime and size, so it is repeated only when the file changes)
+plus one `SCDynamicStoreCopyConsoleUser` call. The plist write happens when the active pattern
+set changes (window start/end, edit) or the user copy was deleted; `CFPreferencesSynchronize`
+is a cfprefsd round trip, microseconds, and the user-domain mirror is one short-lived
+`defaults` process per write, allowed 10 s before it is killed. A child that fails (non-zero
+exit, could not launch, timed out) puts every user-domain spawn on a **30 s backoff**: until it
+elapses, `apply`/`clear` return the last reason without spawning, so a persistent failure
+costs at most one timeout per 30 s rather than one per 2 s tick.
 
 ## 8. Testing
 
 - Core: pattern validation table; union per tick in sorted order; `c:` lock items (remove →
   held under Impossible, add → never weakens); status decode without the key; config decode of
   a 0.5 file.
-- Daemon: a `ChromePolicyWriter` protocol in Core with a recording fake for Reconciler tests;
-  the real one in `focusguardd` is tested live only.
+- Daemon: a `ChromePolicyWriter` protocol in Core with a recording fake for Reconciler tests.
+  The pure parts of the real writer live in Core (`ChromePolicyFiles.swift`) and are unit
+  tested there: the record codec (round trip; a pre-uid record decodes; garbage is nil), the
+  import plist (XML, exact strings, only `URLBlocklist`), `BoundedUserFile` against scratch
+  files (regular file read; missing → absent; FIFO → refused without blocking; symlink,
+  oversize and wrong owner → refused; identity stamp changes on rename-in-place) and the spawn
+  backoff. The CFPreferences and `launchctl`/`sudo`/`defaults` plumbing is tested live only.
 - Live script `scripts/verify-chrome.sh` (no password; runs in a schedule gap like
   `verify-keywords.sh`): a window with the two News Feed Eradicator patterns, Basic → within a
   tick `defaults read` shows them; the user confirms `chrome://extensions` is blocked (the
