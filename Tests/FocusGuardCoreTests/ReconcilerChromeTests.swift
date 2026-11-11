@@ -93,6 +93,22 @@ final class ReconcilerChromeTests: XCTestCase {
         XCTAssertEqual(chrome.applied, [all])
     }
 
+    func testASecondForeignEpisodeIsLoggedAgain() {
+        chrome.present = ["https://theirs.example"]
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        chrome.present = nil
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 2), monotonic: 102))
+        XCTAssertEqual(chrome.applied.count, 1)
+        // Window ends: our key is cleared. Then they set theirs before the next window.
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(12, 0), monotonic: 7300))
+        XCTAssertEqual(chrome.clears, 1)
+        chrome.present = ["https://theirs.example"]
+        let nextMonday = cal.date(byAdding: .day, value: 7, to: monday(10, 0))!
+        let r = sut.tick(live: cfg, clock: ClockSample(wall: nextMonday, monotonic: 100 + 7 * 86400))
+        XCTAssertEqual(r.chrome, "not applied (URLBlocklist already set by someone else)")
+        XCTAssertEqual(log.errors.filter { $0.contains("already set by someone else") }.count, 2, "a new episode")
+    }
+
     func testRestartWithARecordOwnsTheKey() {
         // A previous daemon wrote these and the window is now over: clear.
         chrome.record = all

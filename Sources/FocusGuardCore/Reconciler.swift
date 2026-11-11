@@ -212,7 +212,10 @@ public final class Reconciler {
         return "error: \(reason)"
     }
 
+    /// After a successful write of ours: the failure latch opens, and a foreign key seen later
+    /// is a new episode worth logging again.
     private func chromeRecovered() {
+        chromeForeignLogged = false
         if chromeFailing {
             chromeFailing = false
             log.info("chrome policy writes recovered")
