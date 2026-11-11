@@ -41,6 +41,12 @@ final class Installer {
     }
     var opensAtLogin: Bool { loginItemStatus == .enabled }
 
+    /// The four facts the Setup sheet decides on; see `SetupNeed`.
+    var setupFlags: SetupNeed.Flags {
+        SetupNeed.Flags(daemonInstalled: daemonInstalled, legacyDaemonRunning: legacyDaemonRunning,
+                        needsUpdate: needsUpdate, daemonRunning: daemonRunning)
+    }
+
     func refresh() {
         daemonProcess = DaemonProbe.find()
         status = Self.readStatus()
