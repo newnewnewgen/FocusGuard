@@ -2,9 +2,10 @@ import FocusGuardCore
 import SwiftUI
 
 /// The checklist that was the Status tab's "Protection" section (UI polish spec §3). Presented
-/// over the settings window whenever `SetupNeed.evaluate` finds protection unhealthy — at launch
-/// and each time the app becomes active — and on demand from Status → "Setup…", which is how the
-/// login and Dock toggles stay reachable once everything is green.
+/// over the settings window whenever `SetupNeed.shouldPresent` says protection is unhealthy and
+/// the user has not clicked "Not now" on this exact state — at launch and each time the app
+/// becomes active — and on demand from Status → "Setup…", which is how the login and Dock
+/// toggles stay reachable once everything is green.
 struct SetupSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(DockFallback.self) private var dock
@@ -64,6 +65,10 @@ struct SetupSheet: View {
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
+                // The exit while protection is unhealthy (a cancelled password prompt, a failed
+                // install, a dev build run from `build/`): the window stays usable, Status keeps
+                // its orange row, and the sheet comes back on its own only if something changes.
+                Button("Not now") { model.snoozeSetup() }.keyboardShortcut(.cancelAction)
                 Button("Done") { close() }.keyboardShortcut(.defaultAction).disabled(!protectionHealthy)
             }
         }

@@ -35,8 +35,12 @@ final class AppModel {
     var pendingChallenge: PendingChallenge?
     var lockedMessage: String?
     /// The Setup sheet is up (`SetupSheet.swift`). Set by `presentSetupIfNeeded()` and by
-    /// Status → "Setup…"; cleared by the sheet's Done button or its auto-close.
+    /// Status → "Setup…"; cleared by the sheet's Done / Not now buttons or its auto-close.
     var setupSheetPresented = false
+    /// The install flags as they were when the user clicked "Not now" on the Setup sheet.
+    /// `presentSetupIfNeeded()` stays quiet while they are unchanged (`SetupNeed.shouldPresent`).
+    /// In memory only, so a relaunch shows the sheet again; Status keeps its orange row meanwhile.
+    private(set) var setupSnoozedFor: SetupNeed.Flags?
 
     private let store = ConfigStore()
     let installer = Installer()
@@ -246,9 +250,25 @@ final class AppModel {
     }
 
     /// Re-probe the install and put the Setup sheet up if protection is not healthy. Called
-    /// when the settings window appears and whenever the app becomes active (spec §3).
+    /// when the settings window appears, whenever the app becomes active, and once more when a
+    /// Friction challenge sheet goes away (spec §3).
+    ///
+    /// Never while a challenge is up: `didBecomeActive` fires after the password dialog, and
+    /// with the `ChallengeSheet` still presented SwiftUI drops the second sheet while
+    /// `setupSheetPresented` sticks true, so the Setup sheet never shows again. The challenge's
+    /// `onDismiss` re-runs this so a deferred setup still shows.
     func presentSetupIfNeeded() {
+        guard pendingChallenge == nil else { return }
         installer.refresh()
-        if SetupNeed.evaluate(installer.setupFlags) != nil { setupSheetPresented = true }
+        if SetupNeed.shouldPresent(flags: installer.setupFlags, snoozed: setupSnoozedFor) {
+            setupSheetPresented = true
+        }
+    }
+
+    /// "Not now" on the Setup sheet: close it and do not re-present it on our own until the
+    /// install flags change or the app is relaunched. Status → "Setup…" still opens it.
+    func snoozeSetup() {
+        setupSnoozedFor = installer.setupFlags
+        setupSheetPresented = false
     }
 }

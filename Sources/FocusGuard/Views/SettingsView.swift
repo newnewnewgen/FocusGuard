@@ -11,7 +11,9 @@ struct SettingsView: View {
             ScheduleTab().tabItem { Label("Schedule", systemImage: "calendar") }
         }
         .frame(minWidth: 640, minHeight: 460)
-        .sheet(item: $model.pendingChallenge) { challenge in
+        // onDismiss: a Setup presentation deferred while the challenge was up (see
+        // `presentSetupIfNeeded`) is retried once the challenge sheet is actually gone.
+        .sheet(item: $model.pendingChallenge, onDismiss: { model.presentSetupIfNeeded() }) { challenge in
             ChallengeSheet(challenge: challenge) { model.pendingChallenge = nil }
         }
         // The window opens at launch until protection is installed (`FocusGuardApp.settingsWindow`);

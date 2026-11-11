@@ -25,7 +25,9 @@ The window opens with the **Setup** sheet. Click **Install protection…** and t
 once: that installs the daemon as root-owned files (`/Library/PrivilegedHelperTools/` and
 `/Library/LaunchDaemons/`) and adds FocusGuard to your login items. The sheet closes by itself
 once everything is green; **Status → Setup…** brings it back (that is where the login-item and
-Dock toggles live). Ad-hoc signed; requires macOS 15.
+Dock toggles live). **Not now** closes it without installing: Status then shows one orange row,
+and the sheet only reopens on its own when something changes or the app is relaunched. Ad-hoc
+signed; requires macOS 15.
 
 After rebuilding, `ditto` the new bundle over the old one and reopen the app. If the daemon
 changed, the Setup sheet opens by itself with **Background daemon needs updating** and an

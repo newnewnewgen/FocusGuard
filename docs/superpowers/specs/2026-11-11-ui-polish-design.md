@@ -68,7 +68,10 @@ window when, on launch or on `didBecomeActive`, any of these is true:
    `error: …`.
 
 A **Done** button is enabled once step 1 is healthy; the sheet also closes itself 1.5 s after
-every shown step turns green. It can be reopened from the Status tab through a single
+every shown step turns green. A secondary **Not now** button (Escape) always closes it and
+snoozes the automatic presentation until the install flags change or the app is relaunched
+(`SetupNeed.shouldPresent(flags:snoozed:)`), so a cancelled password prompt or a failed install
+never leaves the window unusable; "Setup…" on Status ignores the snooze. It can be reopened from the Status tab through a single
 secondary-style link at the bottom, "Setup…", so the login toggle stays reachable.
 
 What remains on the Status tab when everything is healthy: the `noticeSection` (only when it
@@ -112,6 +115,7 @@ the daemon.
 ## 8. Testing
 
 App target (`Tests/FocusGuardAppTests`): `addWindow` attaches only the first list; reorder
-produces a config whose `weakens(from:)` is nil; Setup-sheet predicate (`SetupNeed.evaluate`
-pure function over the installer's flags) covers each trigger and the healthy case. Everything
+produces a config whose `weakens(from:)` is nil; Setup-sheet predicates (`SetupNeed.evaluate`
+and `SetupNeed.shouldPresent`, pure functions over the installer's flags) cover each trigger,
+the healthy case and the "Not now" snooze. Everything
 visual is checked by Newgen in the running app, as with the bulk-add change.
