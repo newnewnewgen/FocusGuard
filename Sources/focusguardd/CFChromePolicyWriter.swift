@@ -325,13 +325,13 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
             try p.run()
         } catch {
             stderr.fileHandleForReading.readabilityHandler = nil
-            try? stderr.fileHandleForReading.close()
             return .failure(StringReason(failed("launchctl asuser: \(error.localizedDescription)")))
         }
         try? stderr.fileHandleForWriting.close()
         let finished = wait(for: p, timeout: userDomainTimeout)
+        // The read end is closed when the Pipe goes away, not here: a handler call still in
+        // flight must never find a closed descriptor.
         stderr.fileHandleForReading.readabilityHandler = nil
-        try? stderr.fileHandleForReading.close()
         guard finished else {
             return .failure(StringReason(failed("\(label) (user domain) timed out after \(Int(userDomainTimeout)) s")))
         }
