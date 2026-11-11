@@ -222,3 +222,20 @@ against 72 s over 8 h 12 m for the 0.4.0 daemon earlier the same day.
 Still untested: `utun` capture actually carrying DNS (a VPN with its own resolver); a resolver on
 127.0.0.1 (documented as a gap); reboot.
 
+
+## Live acceptance of Chrome pages (pending — daemon 0.6.0)
+
+To be filled in after the user updates the daemon from the Status tab and runs
+`scripts/verify-chrome.sh` with Chrome open. Record here: `status.json` `chrome` values seen;
+whether `chrome://extensions` and the News Feed Eradicator options page were blocked and how
+long after adoption; the user copy re-asserted after `defaults delete com.google.Chrome
+URLBlocklist` and how long it took; key removal from both domains on window end (and that
+Chrome noticed — the probe showed it ignores removal from the system copy alone, which is why
+the user copy exists); the held removal under Impossible; daemon CPU over the run (one open +
+`fstat` of the user's plist per tick while patterns are active, nothing else periodic, so it
+should barely move). Probe verdict, already recorded in the spec: write both domains (variant
+B). Still untested until then: Chrome absent (`Chrome not found` suffix); the "already set by
+someone else" path; a restart mid-window (record-based ownership); nobody logged in (status
+`applied (N patterns)` with no mirror); a `defaults import` failure surfacing as
+`error: defaults import (user domain) exited 1: …` and the 30 s spawn backoff; uninstall with a
+key held.

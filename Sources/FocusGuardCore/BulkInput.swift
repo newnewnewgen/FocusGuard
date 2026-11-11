@@ -22,6 +22,15 @@ public enum BulkInput {
         }
     }
 
+    public struct ChromeURLs: Equatable {
+        public var accepted: [String]
+        public var rejected: [String]
+        public init(accepted: [String], rejected: [String]) {
+            self.accepted = accepted
+            self.rejected = rejected
+        }
+    }
+
     /// Splits free text into site names. Separators: newlines, commas, semicolons, tabs, spaces.
     /// A hosts-file style line ("0.0.0.0 example.com", "127.0.0.1 a.com b.com", "::1 x.org") yields
     /// the names after the address; lines starting with "#" (after trimming) are comments and
@@ -65,6 +74,26 @@ public enum BulkInput {
             }
         }
         return Keywords(accepted: accepted, rejected: rejected)
+    }
+
+    /// Same splitting and comment handling (no hosts-file handling), each token through
+    /// `ChromeURLPattern.normalize`. A pattern never needs a `#` (Chrome ignores fragments), so
+    /// the comment rule costs nothing.
+    public static func chromeURLs(from text: String) -> ChromeURLs {
+        var accepted: [String] = []
+        var rejected: [String] = []
+        var seenAccepted = Set<String>()
+        var seenRejected = Set<String>()
+        for line in lines(of: text) {
+            for token in split(line) {
+                if let pattern = ChromeURLPattern.normalize(token) {
+                    if seenAccepted.insert(pattern).inserted { accepted.append(pattern) }
+                } else if seenRejected.insert(token).inserted {
+                    rejected.append(token)
+                }
+            }
+        }
+        return ChromeURLs(accepted: accepted, rejected: rejected)
     }
 
     // MARK: - Pieces

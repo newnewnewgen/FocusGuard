@@ -45,3 +45,43 @@ final class StubbornProcesses: ProcessController {
     func terminate(pid: Int32) { terminated.append(pid) }
     func kill(pid: Int32) { killed.append(pid) }
 }
+
+/// Stands in for Chrome's policy preference. `present` is what the key holds right now (nil =
+/// absent, whoever set it); `record` is what FocusGuard's ownership record says it last wrote.
+final class RecordingChromePolicyWriter: ChromePolicyWriter {
+    var present: [String]?
+    var record: [String]?
+    var applied: [[String]] = []
+    var clears = 0
+    var failWith: String?
+    /// With `failWith`: the key was set before the failure (the record was not), as a writer
+    /// that died between the two would leave it.
+    var failLeavesKey = false
+    /// The user-domain copy. nil: follows `present`; set false to stand for a user who deleted
+    /// it. A successful `apply`/`clear` makes it follow `present` again.
+    var userCopy: Bool?
+    var chromeInstalled = true
+
+    func recordedPatterns() -> [String]? { record }
+    func keyIsPresent() -> Bool { present != nil }
+    func userCopyPresent() -> Bool { userCopy ?? (present != nil) }
+    func apply(patterns: [String]) -> String? {
+        if let failWith {
+            if failLeavesKey { present = patterns }
+            return failWith
+        }
+        applied.append(patterns)
+        present = patterns
+        record = patterns
+        userCopy = nil
+        return nil
+    }
+    func clear() -> String? {
+        if let failWith { return failWith }
+        clears += 1
+        present = nil
+        record = nil
+        userCopy = nil
+        return nil
+    }
+}

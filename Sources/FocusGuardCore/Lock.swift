@@ -70,7 +70,7 @@ extension Config {
     /// strictest `old` mode among the items whose protection is cut.
     ///
     /// At each evaluated minute within `old`'s current active stretch (at most a week), every
-    /// blocked item — a normalized domain, a bundle ID or a keyword rule — has an *effective
+    /// blocked item — a normalized domain, a bundle ID, a keyword rule or a Chrome URL pattern — has an *effective
     /// protection*: the strictest `unlockMode` among the active windows that cover it. An item is
     /// cut when `self` gives it no protection at that minute, or a lower mode than `old` did.
     /// Keying on items rather than on windows means disabling an impossible window while a basic
@@ -134,6 +134,7 @@ extension Config {
                 guard let l = perList[id] else { continue }
                 out.set.domains.formUnion(l.set.domains)
                 out.set.bundleIDs.formUnion(l.set.bundleIDs)
+                out.set.chromeURLs.formUnion(l.set.chromeURLs)
                 out.keywords.formUnion(l.keywords)
             }
             return out
@@ -150,6 +151,7 @@ extension Config {
             for d in items[i].set.domains { map["d:" + d] = max(map["d:" + d] ?? mode, mode) }
             for b in items[i].set.bundleIDs { map["a:" + b] = max(map["a:" + b] ?? mode, mode) }
             for k in items[i].keywords { map["k:" + k] = max(map["k:" + k] ?? mode, mode) }
+            for c in items[i].set.chromeURLs { map["c:" + c] = max(map["c:" + c] ?? mode, mode) }
         }
         return map
     }

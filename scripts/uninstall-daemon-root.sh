@@ -20,6 +20,34 @@ if loaded; then
 fi
 
 rm -f "/Library/LaunchDaemons/$LABEL.plist" "/Library/PrivilegedHelperTools/$LABEL" /usr/local/libexec/focusguardd
+# The daemon removes its Chrome URLBlocklist key on SIGTERM. If it was killed instead, the
+# ownership record is still here and the key is ours to remove (never anyone else's). The
+# record names the user whose domain holds the mirror; the console user is only the fallback
+# for a record from before that field existed. A staleMirrorUID is a previous user whose
+# mirror the daemon could not remove when the console user changed: removed here too.
+record=/var/db/FocusGuard/chrome-policy.json
+if [ -f "$record" ]; then
+    defaults delete /Library/Preferences/com.google.Chrome URLBlocklist 2>/dev/null || true
+    target_uid=$(/usr/bin/python3 -c 'import json,sys
+r=json.load(open(sys.argv[1]))
+u=r.get("uid")
+print(int(u) if isinstance(u,int) and u>0 else "")' "$record" 2>/dev/null || true)
+    stale_uid=$(/usr/bin/python3 -c 'import json,sys
+r=json.load(open(sys.argv[1]))
+u=r.get("staleMirrorUID")
+print(int(u) if isinstance(u,int) and u>0 else "")' "$record" 2>/dev/null || true)
+    if [ -z "${target_uid:-}" ]; then
+        console_user=$(stat -f %Su /dev/console 2>/dev/null || true)
+        if [ -n "$console_user" ] && [ "$console_user" != root ]; then
+            target_uid=$(id -u "$console_user" 2>/dev/null || true)
+        fi
+    fi
+    for uid in ${target_uid:-} ${stale_uid:-}; do
+        [ "$uid" != 0 ] && [ "$uid" != "${done_uid:-}" ] || continue
+        launchctl asuser "$uid" sudo -n -H -u "#$uid" defaults delete com.google.Chrome URLBlocklist 2>/dev/null || true
+        done_uid=$uid
+    done
+fi
 rm -rf /var/db/FocusGuard "/Library/Application Support/FocusGuard/state"
 
 # Belt and braces: if the daemon was killed rather than stopped, its region is still in

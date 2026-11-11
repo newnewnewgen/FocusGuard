@@ -108,25 +108,73 @@ public struct KeywordRule: Codable, Equatable, Hashable, Identifiable {
     public var itemKey: String { "\(match.rawValue):\(text)" }
 }
 
+/// A Chrome `URLBlocklist` pattern (chrome pages spec §2). Kept as typed: Chrome does its own
+/// matching. The app only trims, rejects whitespace and control characters, and checks the
+/// shape — a scheme Chrome knows, or a bare host pattern it accepts without one.
+public enum ChromeURLPattern {
+    public static let schemes = ["chrome://", "chrome-extension://", "chrome-untrusted://", "devtools://",
+                                 "file://", "http://", "https://"]
+    public static let maxLength = 2048
+
+    /// The trimmed pattern with its scheme lowercased, or nil when `raw` cannot be one. The
+    /// part after the scheme is kept as typed: Chrome does its own matching.
+    public static func normalize(_ raw: String) -> String? {
+        let p = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !p.isEmpty, p.count <= maxLength,
+              !p.unicodeScalars.contains(where: {
+                  CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
+              }) else { return nil }
+        let lower = p.lowercased()
+        if let scheme = schemes.first(where: { lower.hasPrefix($0) }) {
+            return p.count > scheme.count ? scheme + p.dropFirst(scheme.count) : nil
+        }
+        return isBareHostPattern(p) ? p : nil
+    }
+
+    public static func isValid(_ pattern: String) -> Bool { normalize(pattern) == pattern }
+
+    /// `*`, `example.com`, `.exact.host.com`, optionally followed by `:port` (1–5 digits) and
+    /// `/path` — the shapes Chrome accepts without a scheme. `*` is allowed only as the whole
+    /// pattern.
+    static func isBareHostPattern(_ p: String) -> Bool {
+        if p == "*" { return true }
+        var rest = Substring(p)
+        if rest.hasPrefix(".") { rest = rest.dropFirst() }
+        let host = rest.prefix { $0 != "/" && $0 != ":" }
+        guard let first = host.first, first.isLetter || first.isNumber,
+              host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == ".") }),
+              !host.contains("..") else { return false }
+        rest = rest.dropFirst(host.count)
+        if rest.hasPrefix(":") {
+            let port = rest.dropFirst().prefix { $0 != "/" }
+            guard (1...5).contains(port.count), port.allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
+        }
+        return true
+    }
+}
+
 public struct BlockList: Codable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
     public var domains: [String]
     public var appBundleIDs: [String]
     public var keywords: [KeywordRule]
+    /// Chrome `URLBlocklist` patterns, as typed and trimmed (chrome pages spec §2).
+    public var chromeURLs: [String]
 
     public init(id: UUID = UUID(), name: String, domains: [String] = [], appBundleIDs: [String] = [],
-                keywords: [KeywordRule] = []) {
+                keywords: [KeywordRule] = [], chromeURLs: [String] = []) {
         self.id = id
         self.name = name
         self.domains = domains
         self.appBundleIDs = appBundleIDs
         self.keywords = keywords
+        self.chromeURLs = chromeURLs
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, domains, appBundleIDs, keywords }
+    private enum CodingKeys: String, CodingKey { case id, name, domains, appBundleIDs, keywords, chromeURLs }
 
-    /// Files written before keyword rules existed have no `keywords` key.
+    /// Files written before keyword rules (0.5) or Chrome pages (0.6) existed lack those keys.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -134,6 +182,7 @@ public struct BlockList: Codable, Equatable, Identifiable {
         domains = try c.decode([String].self, forKey: .domains)
         appBundleIDs = try c.decode([String].self, forKey: .appBundleIDs)
         keywords = try c.decodeIfPresent([KeywordRule].self, forKey: .keywords) ?? []
+        chromeURLs = try c.decodeIfPresent([String].self, forKey: .chromeURLs) ?? []
     }
 }
 
@@ -260,15 +309,18 @@ public struct Config: Codable, Equatable {
         /// Across all lists.
         public static let maxKeywords = 200
         public static let maxAllow = 500
+        /// Across all lists.
+        public static let maxChromeURLs = 200
     }
 
     public enum ValidationError: LocalizedError, Equatable {
-        case tooLarge(String), duplicateID(String), invalidKeyword(String)
+        case tooLarge(String), duplicateID(String), invalidKeyword(String), invalidChromeURL(String)
         public var errorDescription: String? {
             switch self {
             case .tooLarge(let what): return "Config too large: \(what)."
             case .duplicateID(let what): return "Two \(what) share one id."
             case .invalidKeyword(let text): return "\u{201C}\(text)\u{201D} is not a valid keyword (2–63 letters, digits or hyphens)."
+            case .invalidChromeURL(let p): return "\u{201C}\(p)\u{201D} is not a Chrome URL pattern (a scheme such as chrome:// or chrome-extension://, or a site name; no spaces; at most \(ChromeURLPattern.maxLength) characters)."
             }
         }
     }
@@ -290,5 +342,8 @@ public struct Config: Codable, Equatable {
         if let bad = keywords.first(where: { !$0.isValid }) { throw ValidationError.invalidKeyword(bad.text) }
         guard Set(keywords.map(\.id)).count == keywords.count else { throw ValidationError.duplicateID("keyword rules") }
         guard alwaysAllow.count <= Limits.maxAllow else { throw ValidationError.tooLarge("\(alwaysAllow.count) allow entries; the limit is \(Limits.maxAllow)") }
+        let chromeURLs = blockLists.flatMap(\.chromeURLs)
+        guard chromeURLs.count <= Limits.maxChromeURLs else { throw ValidationError.tooLarge("\(chromeURLs.count) Chrome patterns; the limit is \(Limits.maxChromeURLs)") }
+        if let bad = chromeURLs.first(where: { !ChromeURLPattern.isValid($0) }) { throw ValidationError.invalidChromeURL(bad) }
     }
 }

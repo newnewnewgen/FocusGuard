@@ -4,17 +4,21 @@ import Foundation
 public struct ActiveSet: Equatable {
     public var domains: Set<String>
     public var bundleIDs: Set<String>
+    /// Chrome `URLBlocklist` patterns (chrome pages spec §3). Sorted when written.
+    public var chromeURLs: Set<String>
 
-    public init(domains: Set<String>, bundleIDs: Set<String>) {
+    public init(domains: Set<String>, bundleIDs: Set<String>, chromeURLs: Set<String> = []) {
         self.domains = domains
         self.bundleIDs = bundleIDs
+        self.chromeURLs = chromeURLs
     }
 
     public static let empty = ActiveSet(domains: [], bundleIDs: [])
-    public var isEmpty: Bool { domains.isEmpty && bundleIDs.isEmpty }
+    public var isEmpty: Bool { domains.isEmpty && bundleIDs.isEmpty && chromeURLs.isEmpty }
 
     public func isSubset(of other: ActiveSet) -> Bool {
         domains.isSubset(of: other.domains) && bundleIDs.isSubset(of: other.bundleIDs)
+            && chromeURLs.isSubset(of: other.chromeURLs)
     }
 }
 
@@ -42,6 +46,7 @@ extension Config {
             out.domains.formUnion(list.domains.map(DomainNormalizer.normalize).filter { !$0.isEmpty })
             out.bundleIDs.formUnion(list.appBundleIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty && !ProtectedApps.contains($0) })
+            out.chromeURLs.formUnion(list.chromeURLs.compactMap(ChromeURLPattern.normalize))
         }
         return out
     }

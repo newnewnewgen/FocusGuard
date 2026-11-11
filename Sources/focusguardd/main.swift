@@ -29,6 +29,7 @@ func check() {
     }
     print("domains: \(active.domains.sorted().joined(separator: " "))")
     print("apps:    \(active.bundleIDs.sorted().joined(separator: " "))")
+    print("chrome:  \(active.chromeURLs.sorted().joined(separator: " "))")
     // What a write would be judged against: the strictest active window protects its items until
     // the active stretch ends (Lock.swift). "lock: none" means any edit is accepted right now.
     let lock = config.lockState(at: moment)

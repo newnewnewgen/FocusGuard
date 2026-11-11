@@ -547,3 +547,4 @@ existing window; `openWindow` alone left it behind whatever was in front.
 - Sleep/wake across a boundary, Firefox, and the uninstall path are untested on hardware.
 - `AppModel`, `AppKiller` and `Installer` state mapping have no unit tests.
 - Keyword blocking: see 2026-11-06-keyword-blocking-design.md (implemented in 0.5.0).
+- Chrome pages: see 2026-11-11-chrome-pages-design.md (implemented in 0.6.0).
