@@ -137,6 +137,21 @@ final class ReconcilerChromeTests: XCTestCase {
         XCTAssertEqual(none.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100)).chrome, "off")
     }
 
+    func testHeldConfigKeepsThePatternsItProtects() {
+        var locked = cfg
+        locked.schedules[0].unlockMode = .impossible
+        _ = sut.tick(live: locked, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        XCTAssertEqual(chrome.applied.count, 1)
+        var proposed = locked
+        proposed.blockLists[0].chromeURLs = []
+        proposed.blockLists[1].chromeURLs = []
+        let r = sut.tick(live: proposed, clock: ClockSample(wall: monday(10, 1), monotonic: 160))
+        XCTAssertEqual(r.source, .held)
+        XCTAssertEqual(chrome.applied.count, 1, "the accepted set is still enforced: no rewrite")
+        XCTAssertEqual(chrome.clears, 0)
+        XCTAssertEqual(r.chrome, "applied (3 patterns)")
+    }
+
     func testTeardownClearsOnlyOurOwnKey() {
         chrome.present = ["https://theirs.example"]
         _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
