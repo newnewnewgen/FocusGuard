@@ -31,13 +31,12 @@ final class AppModel {
     private(set) var nextWindowNames: [String] = []
     /// The config the daemon has accepted (root-owned file, readable by us).
     private(set) var enforced: Config?
-    /// Names the daemon has learned (root-owned file, readable), grouped by the rule that
-    /// catches them, recomputed only when the file or the config changes.
-    private(set) var learned: Set<String> = []
-    private(set) var learnedByRule: [UUID: [String]] = [:]
 
     var pendingChallenge: PendingChallenge?
     var lockedMessage: String?
+    /// The Setup sheet is up (`SetupSheet.swift`). Set by `presentSetupIfNeeded()` and by
+    /// Status → "Setup…"; cleared by the sheet's Done button or its auto-close.
+    var setupSheetPresented = false
 
     private let store = ConfigStore()
     let installer = Installer()
@@ -95,27 +94,6 @@ final class AppModel {
     /// config.json cannot be read and the daemon has a copy we could put back.
     var canRestoreConfig: Bool { config == nil && enforced != nil }
 
-    private static func loadLearned() -> Set<String> {
-        FileManager.default.contents(atPath: Paths.learned)
-            .flatMap { try? JSONDecoder().decode(LearnedNames.self, from: $0) }?.names ?? []
-    }
-
-    private func updateLearned() {
-        let names = Self.loadLearned()
-        let config = self.config ?? .empty
-        var byRule: [UUID: [String]] = [:]
-        let candidates = names.filter { !config.isAlwaysAllowed($0) }
-        for list in config.blockLists {
-            for rule in list.keywords {
-                byRule[rule.id] = candidates.filter { rule.matches(name: $0) }.sorted()
-            }
-        }
-        learned = names
-        learnedByRule = byRule
-    }
-
-    /// Learned names this rule catches, for "Blocked so far".
-    func learnedNames(for rule: KeywordRule) -> [String] { learnedByRule[rule.id] ?? [] }
     /// What the daemon reports about lookup watching; nil when no daemon status is known.
     var keywordWatch: String? { installer.status?.dnsWatch }
     var hasKeywordRules: Bool { (config ?? .empty).hasKeywordRules }
@@ -156,7 +134,6 @@ final class AppModel {
     func refresh() {
         watchDaemonStateIfPossible()
         enforced = FileManager.default.contents(atPath: Paths.lastGood).flatMap { try? Config.decodeJSON($0) }
-        updateLearned()
         let now = trustedNow
         let calendar = daemonCalendar
         let moment = LocalMoment(date: now, calendar: calendar)
@@ -181,7 +158,6 @@ final class AppModel {
                 guard let self else { return }
                 let before = self.installer.status
                 self.installer.refreshStatus()
-                self.updateLearned()
                 if self.installer.status != before { self.refresh() }
             }
         }
@@ -269,17 +245,10 @@ final class AppModel {
         if saveError == nil { loadError = nil }
     }
 
-    // MARK: Whole-app actions
-
-    /// Removing the daemon removes every block, now and for as long as the current stretch of
-    /// windows would have run, so it is judged like deleting the whole configuration. The daemon
-    /// cannot refuse this one (the uninstaller runs as root, after a password); this is the
-    /// in-app guard.
-    var uninstallMode: UnlockMode? {
-        Config.empty.weakens(from: effective, at: trustedMoment)
-    }
-
-    func requestUninstall() {
-        gate(uninstallMode, recheck: { [weak self] in self?.uninstallMode }) { [installer] in installer.uninstall() }
+    /// Re-probe the install and put the Setup sheet up if protection is not healthy. Called
+    /// when the settings window appears and whenever the app becomes active (spec §3).
+    func presentSetupIfNeeded() {
+        installer.refresh()
+        if SetupNeed.evaluate(installer.setupFlags) != nil { setupSheetPresented = true }
     }
 }

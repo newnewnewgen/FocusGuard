@@ -119,26 +119,20 @@ struct BlockListDetail: View {
 
             Section {
                 ForEach(uniqueRules(list.keywords)) { rule in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(rule.text).font(.system(.body, design: .monospaced))
-                            Picker("", selection: Binding(
-                                get: { rule.match },
-                                set: { m in commit { $0.update(list: list.id) { l in
-                                    if let i = l.keywords.firstIndex(where: { $0.id == rule.id }) { l.keywords[i].match = m }
-                                } } }
-                            )) {
-                                ForEach(KeywordRule.Match.allCases, id: \.self) { Text($0.title).tag($0) }
-                            }
-                            .labelsHidden().frame(width: 130)
-                            .disabled(removalsLocked)
-                            Spacer()
-                            removeButton { commit { $0.update(list: list.id) { $0.keywords.removeAll { $0.id == rule.id } } } }
+                    HStack {
+                        Text(rule.text).font(.system(.body, design: .monospaced))
+                        Picker("", selection: Binding(
+                            get: { rule.match },
+                            set: { m in commit { $0.update(list: list.id) { l in
+                                if let i = l.keywords.firstIndex(where: { $0.id == rule.id }) { l.keywords[i].match = m }
+                            } } }
+                        )) {
+                            ForEach(KeywordRule.Match.allCases, id: \.self) { Text($0.title).tag($0) }
                         }
-                        let caught = model.learnedNames(for: rule)
-                        Text(caught.isEmpty ? "Blocked so far: none yet"
-                             : "Blocked so far: " + caught.prefix(10).joined(separator: ", ") + (caught.count > 10 ? " +\(caught.count - 10) more" : ""))
-                            .font(.caption).foregroundStyle(.secondary)
+                        .labelsHidden().frame(width: 130)
+                        .disabled(removalsLocked)
+                        Spacer()
+                        removeButton { commit { $0.update(list: list.id) { $0.keywords.removeAll { $0.id == rule.id } } } }
                     }
                 }
                 AddRow("Add a keyword, e.g. manga", text: $newKeyword, onSubmit: addKeyword) {

@@ -6,39 +6,10 @@ struct StatusTab: View {
     @Environment(DockFallback.self) private var dock
 
     var body: some View {
-        let inst = model.installer
         Form {
+            // A broken state is never silent: one orange row pointing at the Setup sheet (spec §3).
+            if let first = problems.first { problemSection(first, more: problems.count - 1) }
             if model.daemonIsHolding || model.clockTampered || model.zoneHeldBack != nil || model.canRestoreConfig { noticeSection }
-
-            Section("Protection") {
-                daemonRow(inst)
-                Toggle("Open FocusGuard at login", isOn: Binding(get: { inst.opensAtLogin }, set: { inst.setOpensAtLogin($0) }))
-                if model.hasKeywordRules || (model.keywordWatch ?? "off") != "off" {
-                    let watch = model.keywordWatch ?? "unknown (daemon status not available)"
-                    row(done: watch.hasPrefix("watching"), "Keyword matching: \(watch)",
-                        detail: watch.hasPrefix("watching") ? "Sites whose names match your keywords are learned from the Mac's lookups and blocked." :
-                                "Keyword rules are inert until the daemon can watch lookups; sites and apps listed by name still work.")
-                }
-                if model.hasChromeURLs || (model.chromePages ?? "off") != "off" {
-                    let chrome = model.chromePages ?? "unknown (daemon status not available)"
-                    row(done: chrome.hasPrefix("applied"), "Chrome pages: \(chrome)",
-                        detail: chrome.hasPrefix("applied") ? "Chrome's URLBlocklist policy holds the patterns of every active window; Chrome shows those pages as blocked by an administrator." :
-                                chrome.hasPrefix("not applied") ? "Something else has set Chrome's URLBlocklist. FocusGuard never overwrites it. To let FocusGuard manage it: sudo defaults delete /Library/Preferences/com.google.Chrome URLBlocklist" :
-                                chrome.hasPrefix("error: ") ? "The daemon could not write Chrome's policy: \(chrome.dropFirst("error: ".count)). It retries every tick." :
-                                "Chrome patterns are written to Chrome's policy when a window that has them starts.")
-                }
-                Text("The background daemon blocks sites and apps whether or not this app is open. The app is where you edit lists and schedules; while it is open, blocked apps close instantly rather than within two seconds.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if let err = inst.lastError { Text(err).foregroundStyle(.red).font(.callout) }
-            }
-
-            Section {
-                Toggle("Show FocusGuard in the Dock", isOn: Binding(get: { dock.showsInDock }, set: { dock.setShowsInDock($0) }))
-                Text(dock.menuBarIconHidden
-                     ? "macOS is hiding the menu-bar icon because the menu bar is full, so FocusGuard shows in the Dock. You can always open this window from Spotlight too."
-                     : "FocusGuard lives in the menu bar (shield icon). If macOS hides that icon when the menu bar is full, it shows in the Dock automatically.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
 
             Section("Now") {
                 if model.isBlocking {
@@ -56,22 +27,49 @@ struct StatusTab: View {
                 if let err = model.saveError { Text(err).foregroundStyle(.red).font(.callout) }
             }
 
-            if inst.daemonInstalled || inst.legacyDaemonRunning {
-                Section {
-                    let mode = model.uninstallMode
-                    HStack {
-                        Button("Uninstall protection…", role: .destructive) { model.requestUninstall() }
-                            .disabled(mode == .impossible || inst.working)
-                        if mode == .impossible { LockBadge(until: model.lockState.lockedUntil) }
-                    }
-                    Text("Asks for your password, then removes the daemon and unblocks everything. Your lists and schedule stay in config.json.")
-                        .font(.caption).foregroundStyle(.secondary)
+            Section {
+                HStack {
+                    Spacer()
+                    // The login and Dock toggles live on the sheet; this is how they stay reachable.
+                    Button("Setup…") { model.setupSheetPresented = true }.buttonStyle(.link)
                 }
             }
         }
         .formStyle(.grouped)
-        .onAppear { inst.refresh(); dock.check() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in inst.refresh() }
+        .onAppear { dock.check() }
+    }
+
+    /// Everything the Setup sheet would show as not green, in the sheet's order. Only a keyword
+    /// capture *error* counts ("waiting for network" is not a problem), and a Chrome policy that
+    /// errored or was not applied; the Dock row counts only when the icon is hidden and the Dock
+    /// stand-in is off, which is the one unreachable state.
+    private var problems: [String] {
+        var out: [String] = []
+        if let reason = SetupNeed.evaluate(model.installer.setupFlags) { out.append(reason.title) }
+        if model.hasKeywordRules, let watch = model.keywordWatch, watch.hasPrefix("error:") {
+            out.append("Keyword matching: \(watch)")
+        }
+        if model.hasChromeURLs, let chrome = model.chromePages, chrome.hasPrefix("error:") || chrome.hasPrefix("not applied") {
+            out.append("Chrome pages: \(chrome)")
+        }
+        if dock.menuBarIconHidden, !dock.showsInDock {
+            out.append("The menu-bar icon is hidden by macOS and the Dock icon is off")
+        }
+        return out
+    }
+
+    private func problemSection(_ title: String, more: Int) -> some View {
+        Section {
+            HStack(alignment: .firstTextBaseline) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    if more > 0 { Text("and \(more) more in Setup").font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer()
+                Button("Setup…") { model.setupSheetPresented = true }
+            }
+        }
     }
 
     /// Things the daemon is doing that the rest of the window would otherwise contradict.
@@ -121,54 +119,6 @@ struct StatusTab: View {
                     }
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private func daemonRow(_ inst: Installer) -> some View {
-        if inst.working {
-            row(done: false, "Waiting for your password…")
-        } else if inst.legacyDaemonRunning {
-            row(done: false, "Protection needs reinstalling",
-                detail: "This version keeps the daemon in a system folder other programs cannot change. One password prompt; your settings are kept.") {
-                Button("Reinstall…") { inst.install() }
-            }
-        } else if !inst.daemonInstalled {
-            row(done: false, "Background daemon not installed",
-                detail: "Installs the root daemon that does the blocking. macOS asks for your password once.") {
-                Button("Install protection…") { inst.install() }
-            }
-        } else if inst.needsUpdate {
-            row(done: false, "Background daemon needs updating",
-                detail: "This app is newer than the installed daemon\(inst.status.map { " (\($0.version))" } ?? ""). Blocking continues meanwhile.") {
-                Button("Update…") { inst.install() }
-            }
-        } else if inst.daemonRunning {
-            row(done: true, "Background daemon running",
-                detail: [inst.status.map { "version \($0.version)" }, inst.daemonProcess.map { "pid \($0.pid)" }]
-                    .compactMap { $0 }.joined(separator: " · "))
-        } else {
-            row(done: false, "Background daemon installed but not running",
-                detail: "launchd normally restarts it within seconds. Reinstalling re-registers it.") {
-                Button("Reinstall…") { inst.install() }
-            }
-        }
-    }
-
-    private func row(done: Bool, _ title: String, detail: String? = nil) -> some View {
-        row(done: done, title, detail: detail) { EmptyView() }
-    }
-
-    private func row<Action: View>(done: Bool, _ title: String, detail: String?, @ViewBuilder action: () -> Action) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(done ? .green : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                if let detail, !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary) }
-            }
-            Spacer()
-            action()
         }
     }
 }
