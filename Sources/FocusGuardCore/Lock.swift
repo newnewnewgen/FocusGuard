@@ -70,7 +70,7 @@ extension Config {
     /// strictest `old` mode among the items whose protection is cut.
     ///
     /// At each evaluated minute within `old`'s current active stretch (at most a week), every
-    /// blocked item — a normalized domain, a bundle ID or a keyword rule — has an *effective
+    /// blocked item — a normalized domain, a bundle ID, a keyword rule or a Chrome URL pattern — has an *effective
     /// protection*: the strictest `unlockMode` among the active windows that cover it. An item is
     /// cut when `self` gives it no protection at that minute, or a lower mode than `old` did.
     /// Keying on items rather than on windows means disabling an impossible window while a basic
@@ -119,6 +119,7 @@ extension Config {
     private struct WindowItems {
         var set = ActiveSet.empty
         var keywords = Set<String>()
+        var chromeURLs = Set<String>()
     }
 
     private func itemsPerWindow() -> [WindowItems] {
@@ -127,6 +128,7 @@ extension Config {
         for list in blockLists {
             if perList[list.id] == nil { perList[list.id] = WindowItems(set: items(ofLists: [list.id])) }
             perList[list.id]!.keywords.formUnion(list.keywords.map(\.itemKey))
+            perList[list.id]!.chromeURLs.formUnion(list.chromeURLs.compactMap(ChromeURLPattern.normalize))
         }
         return schedules.map { w in
             var out = WindowItems()
@@ -135,6 +137,7 @@ extension Config {
                 out.set.domains.formUnion(l.set.domains)
                 out.set.bundleIDs.formUnion(l.set.bundleIDs)
                 out.keywords.formUnion(l.keywords)
+                out.chromeURLs.formUnion(l.chromeURLs)
             }
             return out
         }
@@ -150,6 +153,7 @@ extension Config {
             for d in items[i].set.domains { map["d:" + d] = max(map["d:" + d] ?? mode, mode) }
             for b in items[i].set.bundleIDs { map["a:" + b] = max(map["a:" + b] ?? mode, mode) }
             for k in items[i].keywords { map["k:" + k] = max(map["k:" + k] ?? mode, mode) }
+            for c in items[i].chromeURLs { map["c:" + c] = max(map["c:" + c] ?? mode, mode) }
         }
         return map
     }
