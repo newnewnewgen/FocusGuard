@@ -17,16 +17,26 @@ import SystemConfiguration
 /// picks up a key *added* to the system file within 15 s but does not notice its *removal* within
 /// 60 s, so the system domain alone would start windows on time and never end them. The console
 /// user's domain (`~/Library/Preferences/com.google.Chrome.plist`, which Chrome watches live) is
-/// therefore mirrored, as that user: cfprefsd keys the user domain by uid, so the daemon runs
-/// `launchctl asuser <uid> sudo -n -u <name> defaults …`. `launchctl asuser` alone only switches
-/// the Mach bootstrap context and would leave `defaults` running as root with root's home;
-/// `sudo -u` (root to user, no password) makes it the user's write. A user can delete that copy,
-/// which makes Chrome reload policy and find the system copy; `userCopyPresent` notices it is
-/// gone (one `stat` of the user's plist per tick while patterns are active) and the Reconciler
-/// re-asserts it on that tick.
+/// therefore mirrored, as that user: cfprefsd keys the user domain by uid, so the daemon writes
+/// the patterns to `Paths.chromeUserImport` and runs
+/// `launchctl asuser <uid> sudo -n -H -u '#<uid>' defaults import com.google.Chrome <that file>`
+/// (`delete` to remove). `launchctl asuser` alone only switches the Mach bootstrap context and
+/// would leave `defaults` running as root with root's home; `sudo -u` (root to user, no password)
+/// makes it the user's write. `import` rather than `write -array` because `write` parses each
+/// element as a plist literal and rejects legal patterns containing `( ) { } [ ] < > "` or commas.
+/// A user can delete their copy, which makes Chrome reload policy and find the system copy;
+/// `userCopyPresent` notices it is gone and the Reconciler re-asserts it on that tick.
 ///
-/// The ownership record `Paths.chromePolicy` holds the patterns last written, so a restarted
-/// daemon knows the key is its own to update or remove; it never touches a key without a record.
+/// **The daemon is root and the user's plist is the user's.** It is never read with
+/// `FileManager.contents(atPath:)`, which follows symlinks anywhere and blocks forever on a FIFO
+/// — a `mkfifo ~/Library/Preferences/com.google.Chrome.plist` would stop every tick, including
+/// the one that handles SIGTERM. `BoundedUserFile` opens with `O_NOFOLLOW|O_NONBLOCK`, checks the
+/// descriptor is a regular file of that uid under 1 MiB, and reads at most that. Anything else is
+/// "cannot tell", which counts as present: a planted file never causes a write.
+///
+/// The ownership record `Paths.chromePolicy` holds the patterns last written and the uid whose
+/// domain mirrors them, so a restarted daemon knows the key is its own to update or remove, and
+/// removes it from the user it wrote it for; it never touches a key without a record.
 struct CFChromePolicyWriter: ChromePolicyWriter {
     /// Variant B of the plan's Task 4 table (write both domains), per the probe's VERDICT.
     static let alsoWritesUserDomain = true
@@ -37,18 +47,28 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
     /// How long the user-domain child (`launchctl asuser … defaults`) may run before it is killed.
     /// A hung child must never block the tick: the write is retried next tick anyway.
     static let userDomainTimeout: TimeInterval = 10
+    /// After a failed child, no child is spawned again for this long: a persistent failure
+    /// costs one timeout per window, not one per 2 s tick (spec §7).
+    static let spawnBackoff: TimeInterval = 30
+    /// A user's Chrome plist larger than this is not read: it is not one Chrome wrote.
+    static let userPlistLimit = 1 << 20
 
-    private struct Record: Codable {
-        var patterns: [String]
-        var writtenAt: Date
+    private let log: ReconcilerLog?
+
+    init(log: ReconcilerLog? = nil) {
+        self.log = log
     }
 
     // MARK: ChromePolicyWriter
 
+    /// A record that exists but cannot be decoded is still a record: the key is ours, its
+    /// contents unknown, so an empty set is returned and the next apply or clear replaces it.
     func recordedPatterns() -> [String]? {
-        guard let data = FileManager.default.contents(atPath: Paths.chromePolicy),
-              let record = try? JSONDecoder().decode(Record.self, from: data) else { return nil }
-        return record.patterns
+        switch Self.loadRecord() {
+        case .absent: return nil
+        case .undecodable: return []
+        case .record(let record): return record.patterns
+        }
     }
 
     /// The system domain only (the foreign-key rule's input): a user's own copy of the key in
@@ -57,54 +77,58 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
         CFPreferencesCopyValue(Self.key, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) != nil
     }
 
-    /// The console user's plist, read directly: no process spawn, and `defaults write` flushes it
-    /// at once so the file is current. The parse is cached by the file's (mtime, size), so an
-    /// unchanged file costs one `stat` per tick. With no console user there is no copy to keep:
-    /// true, so nothing is retried until someone logs in and the next tick sees their file.
+    /// The console user's plist, read directly (no process spawn; `defaults` flushes it at once
+    /// so the file is current) under the bounded-read guard. The parse is cached by the opened
+    /// file's identity (dev, inode, mtime, size), so an unchanged file costs one open+fstat per
+    /// tick. With no console user there is no copy to keep: true, so nothing is retried until
+    /// someone logs in and the next tick sees their file. A file the guard refuses is "cannot
+    /// tell", also true, and logged once per distinct reason.
     func userCopyPresent() -> Bool {
-        guard Self.alsoWritesUserDomain else { return true }
-        guard let user = Self.consoleUser(), let home = NSHomeDirectoryForUser(user.name) else { return true }
-        let path = home + "/Library/Preferences/com.google.Chrome.plist"
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let mtime = attrs[.modificationDate] as? Date, let size = attrs[.size] as? Int else {
-            Self.userPlist.forget()
-            return false
+        guard Self.alsoWritesUserDomain, let user = Self.consoleUser() else { return true }
+        switch userCopy(uid: user.uid) {
+        case .present, .unknown: return true
+        case .absent: return false
         }
-        if let known = Self.userPlist.lookup(path: path, mtime: mtime, size: size) { return known }
-        let present: Bool
-        if let data = FileManager.default.contents(atPath: path),
-           let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] {
-            present = plist["URLBlocklist"] != nil
-        } else {
-            present = false
-        }
-        Self.userPlist.remember(path: path, mtime: mtime, size: size, present: present)
-        return present
     }
 
     /// Order matters for a restart mid-write: the record is saved first, before either domain
     /// is touched, so no step that fails after it (retried next tick; `apply` is idempotent)
     /// can leave a key of ours that a restarted daemon would take for someone else's. The
     /// record is the intent: one with no key behind it is harmless, as `clear` on an absent key
-    /// is a no-op.
+    /// is a no-op. One exception precedes it: a record naming a *different* user's domain means
+    /// that user's copy is ours to remove first, and the record must keep naming them until it is.
     func apply(patterns: [String]) -> String? {
-        guard saveRecord(patterns) else { return "could not write \(Paths.chromePolicy)" }
+        let console = Self.consoleUser()
+        if Self.alsoWritesUserDomain, case .record(let previous) = Self.loadRecord(),
+           let previousUID = previous.uid, previousUID != console?.uid {
+            if let reason = deleteUserDomain(uid: previousUID) {
+                return "previous user \(previous.name ?? "#\(previousUID)"): \(reason)"
+            }
+        }
+        guard saveRecord(patterns, user: console) else { return "could not write \(Paths.chromePolicy)" }
         CFPreferencesSetValue(Self.key, patterns as CFArray, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) else {
             return "CFPreferencesSynchronize failed for the system domain"
         }
-        if Self.alsoWritesUserDomain, let reason = writeUserDomain(patterns) { return reason }
+        if Self.alsoWritesUserDomain, let console, let reason = importUserDomain(patterns, uid: console.uid) { return reason }
         return nil
     }
 
     /// The record goes last here, for the same reason: while any copy of the key may still be
-    /// ours, the record must say so.
+    /// ours, the record must say so. The user copy is removed from the domain the record names
+    /// (the console user's for a record from before the field existed), and the record is kept
+    /// — retried next tick — until a bounded read of that user's plist shows the key gone.
     func clear() -> String? {
         CFPreferencesSetValue(Self.key, nil, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) else {
             return "CFPreferencesSynchronize failed for the system domain"
         }
-        if Self.alsoWritesUserDomain, let reason = writeUserDomain(nil) { return reason }
+        if Self.alsoWritesUserDomain {
+            var target: uid_t? = Self.consoleUser()?.uid
+            if case .record(let record) = Self.loadRecord(), let uid = record.uid { target = uid }
+            // Neither a recorded user nor a console user: nothing was mirrored, nothing to remove.
+            if let target, let reason = deleteUserDomain(uid: target) { return reason }
+        }
         if unlink(Paths.chromePolicy) != 0, errno != ENOENT { return "could not remove \(Paths.chromePolicy)" }
         return nil
     }
@@ -113,81 +137,228 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
     /// (the daemon's own home is root's). Two stats, and only on a tick that has patterns.
     var chromeInstalled: Bool {
         var candidates = ["/Applications/Google Chrome.app"]
-        if let user = Self.consoleUser(), let home = NSHomeDirectoryForUser(user.name) {
+        if let user = Self.consoleUser(), let home = Self.homeDirectory(uid: user.uid) {
             candidates.append(home + "/Applications/Google Chrome.app")
         }
         return candidates.contains { FileManager.default.fileExists(atPath: $0) }
     }
 
-    // MARK: Pieces
+    // MARK: Record
 
-    /// One parse per distinct (path, mtime, size) of the user's plist; see `userCopyPresent`.
+    private enum RecordState {
+        case absent
+        case undecodable
+        case record(ChromePolicyRecord)
+    }
+
+    private static func loadRecord() -> RecordState {
+        guard let data = FileManager.default.contents(atPath: Paths.chromePolicy) else {
+            return FileManager.default.fileExists(atPath: Paths.chromePolicy) ? .undecodable : .absent
+        }
+        guard let record = ChromePolicyRecord.decode(data) else { return .undecodable }
+        return .record(record)
+    }
+
+    private func saveRecord(_ patterns: [String], user: (name: String, uid: uid_t)?) -> Bool {
+        let record = ChromePolicyRecord(patterns: patterns, writtenAt: Date(),
+                                        uid: Self.alsoWritesUserDomain ? user?.uid : nil,
+                                        name: Self.alsoWritesUserDomain ? user?.name : nil)
+        guard let data = record.encode() else { return false }
+        return ConfigFile.writeRootFile(Paths.chromePolicy, data, mode: 0o644)
+    }
+
+    // MARK: User copy
+
+    private enum UserCopy {
+        case present
+        case absent
+        case unknown
+    }
+
+    /// One parse per distinct identity of the user's plist; see `userCopyPresent`.
     private final class UserPlistCache {
         private let lock = NSLock()
-        private var key: (path: String, mtime: Date, size: Int)?
+        private var key: (uid: uid_t, stamp: BoundedUserFile.Stamp)?
         private var present = false
+        private var loggedRefusal: String?
 
-        func lookup(path: String, mtime: Date, size: Int) -> Bool? {
+        func lookup(uid: uid_t, stamp: BoundedUserFile.Stamp) -> Bool? {
             lock.lock(); defer { lock.unlock() }
-            guard let key, key.path == path, key.mtime == mtime, key.size == size else { return nil }
+            guard let key, key.uid == uid, key.stamp == stamp else { return nil }
             return present
         }
-        func remember(path: String, mtime: Date, size: Int, present: Bool) {
+        func remember(uid: uid_t, stamp: BoundedUserFile.Stamp, present: Bool) {
             lock.lock(); defer { lock.unlock() }
-            key = (path, mtime, size)
+            key = (uid, stamp)
             self.present = present
         }
         func forget() {
             lock.lock(); defer { lock.unlock() }
             key = nil
         }
+        /// True the first time `reason` is seen since the last distinct one.
+        func shouldLog(refusal reason: String?) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard reason != loggedRefusal else { return false }
+            loggedRefusal = reason
+            return reason != nil
+        }
     }
     private static let userPlist = UserPlistCache()
 
-    private func saveRecord(_ patterns: [String]) -> Bool {
-        guard let data = try? JSONEncoder().encode(Record(patterns: patterns, writtenAt: Date())) else { return false }
-        return ConfigFile.writeRootFile(Paths.chromePolicy, data, mode: 0o644)
-    }
-
-    /// The user at the console (nil at the login window or when no one is logged in).
-    static func consoleUser() -> (name: String, uid: uid_t)? {
-        var uid: uid_t = 0
-        var gid: gid_t = 0
-        guard let name = SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) as String?,
-              name != "loginwindow", uid != 0 else { return nil }
-        return (name, uid)
-    }
-
-    /// `patterns == nil` deletes the key. Returns a reason on failure; with no console user the
-    /// write cannot be done yet, which is reported so the tick retries it once someone is logged
-    /// in (Chrome is not running for anyone meanwhile).
-    private func writeUserDomain(_ patterns: [String]?) -> String? {
-        guard let user = Self.consoleUser() else { return "no console user for the user-domain write" }
-        var args = ["asuser", String(user.uid), "/usr/bin/sudo", "-n", "-u", user.name, "/usr/bin/defaults"]
-        if let patterns {
-            args += ["write", "com.google.Chrome", "URLBlocklist", "-array"] + patterns
-        } else {
-            args += ["delete", "com.google.Chrome", "URLBlocklist"]
+    private func userCopy(uid: uid_t) -> UserCopy {
+        guard let home = Self.homeDirectory(uid: uid) else { return .unknown }
+        let path = home + "/Library/Preferences/com.google.Chrome.plist"
+        switch BoundedUserFile.read(path: path, uid: uid, limit: Self.userPlistLimit) {
+        case .absent:
+            Self.userPlist.forget()
+            _ = Self.userPlist.shouldLog(refusal: nil)
+            return .absent
+        case .refused(let why):
+            Self.userPlist.forget()
+            if Self.userPlist.shouldLog(refusal: why) {
+                log?.error("chrome: not reading the user's Chrome plist (\(why)); assuming the copy is in place")
+            }
+            return .unknown
+        case .file(let file):
+            _ = Self.userPlist.shouldLog(refusal: nil)
+            if let known = Self.userPlist.lookup(uid: uid, stamp: file.stamp) { return known ? .present : .absent }
+            // Not a plist at all: Chrome cannot read it either, so the key is as good as absent.
+            let present = ChromeUserImport.blocklistPresent(in: file.data) ?? false
+            Self.userPlist.remember(uid: uid, stamp: file.stamp, present: present)
+            return present ? .present : .absent
         }
+    }
+
+    // MARK: User-domain writes
+
+    /// Writes `patterns` into the user's domain via `defaults import`. nil on success.
+    private func importUserDomain(_ patterns: [String], uid: uid_t) -> String? {
+        guard let plist = try? ChromeUserImport.plistData(patterns: patterns),
+              ConfigFile.writeRootFile(Paths.chromeUserImport, plist, mode: 0o644) else {
+            return "could not write \(Paths.chromeUserImport)"
+        }
+        switch Self.runDefaults(uid: uid, ["import", "com.google.Chrome", Paths.chromeUserImport], label: "defaults import") {
+        case .failure(let held):
+            return held.reason
+        case .success(let exit):
+            guard exit.status == 0 else {
+                return Self.failed("defaults import (user domain) exited \(exit.status)\(exit.stderr.map { ": " + $0 } ?? "")")
+            }
+            Self.userPlist.forget()
+            Self.succeeded()
+            return nil
+        }
+    }
+
+    /// `defaults delete` as the user, then proof: exit 1 means both "already absent" and
+    /// "failed", so the user's plist is read (bounded) and the key must be gone. nil on success.
+    private func deleteUserDomain(uid: uid_t) -> String? {
+        let exit: Spawn.Exit
+        switch Self.runDefaults(uid: uid, ["delete", "com.google.Chrome", "URLBlocklist"], label: "defaults delete") {
+        case .failure(let held): return held.reason
+        case .success(let e): exit = e
+        }
+        Self.userPlist.forget()
+        let detail = "defaults delete exited \(exit.status)\(exit.stderr.map { ": " + $0 } ?? "")"
+        switch userCopy(uid: uid) {
+        case .absent:
+            Self.succeeded()
+            return nil
+        case .present:
+            return Self.failed("user copy still holds URLBlocklist (\(detail))")
+        case .unknown:
+            return Self.failed("cannot verify the user copy is gone (\(detail))")
+        }
+    }
+
+    /// Backoff state shared by every write (spec §7): one failure holds all spawns for the window.
+    private static let backoffLock = NSLock()
+    private static var backoff = SpawnBackoff(window: spawnBackoff)
+
+    private static func failed(_ reason: String) -> String {
+        backoffLock.lock(); defer { backoffLock.unlock() }
+        backoff.failed(reason, at: Date())
+        return reason
+    }
+    private static func succeeded() {
+        backoffLock.lock(); defer { backoffLock.unlock() }
+        backoff.succeeded()
+    }
+
+    private enum Spawn {
+        struct Exit {
+            var status: Int32
+            /// First line of what the child wrote to stderr, if anything.
+            var stderr: String?
+        }
+    }
+
+    /// Runs `/usr/bin/defaults <args>` as `uid`, in that user's bootstrap, with the timeout and
+    /// the backoff applied. `.failure` is a reason already recorded as a failure (held, could not
+    /// launch, timed out); `.success` is an exit the caller judges.
+    private static func runDefaults(uid: uid_t, _ args: [String], label: String) -> Result<Spawn.Exit, StringReason> {
+        backoffLock.lock()
+        let held = backoff.heldReason(now: Date())
+        backoffLock.unlock()
+        if let held { return .failure(StringReason(held)) }
+
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        p.arguments = args
+        p.arguments = ["asuser", String(uid), "/usr/bin/sudo", "-n", "-H", "-u", "#\(uid)", "/usr/bin/defaults"] + args
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
+        // stderr is drained as it arrives: a blocking read after exit could wait on a pipe the
+        // child handed to a grandchild, and a full pipe would otherwise stall the child.
+        let stderr = Pipe()
+        let captured = StderrBuffer()
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+            } else {
+                captured.append(chunk)
+            }
+        }
+        p.standardError = stderr
         do {
             try p.run()
         } catch {
-            return "launchctl asuser: \(error.localizedDescription)"
+            stderr.fileHandleForReading.readabilityHandler = nil
+            try? stderr.fileHandleForReading.close()
+            return .failure(StringReason(failed("launchctl asuser: \(error.localizedDescription)")))
         }
-        guard Self.wait(for: p, timeout: Self.userDomainTimeout) else {
-            return "defaults \(patterns == nil ? "delete" : "write") (user domain) timed out after \(Int(Self.userDomainTimeout)) s"
+        try? stderr.fileHandleForWriting.close()
+        let finished = wait(for: p, timeout: userDomainTimeout)
+        stderr.fileHandleForReading.readabilityHandler = nil
+        try? stderr.fileHandleForReading.close()
+        guard finished else {
+            return .failure(StringReason(failed("\(label) (user domain) timed out after \(Int(userDomainTimeout)) s")))
         }
-        // `defaults delete` exits 1 when the key is already absent — the state we want.
-        guard patterns == nil || p.terminationStatus == 0 else {
-            return "defaults write (user domain) exited \(p.terminationStatus)"
+        return .success(Spawn.Exit(status: p.terminationStatus, stderr: captured.firstLine))
+    }
+
+    private struct StringReason: Error {
+        let reason: String
+        init(_ reason: String) { self.reason = reason }
+    }
+
+    private final class StderrBuffer {
+        private let lock = NSLock()
+        private var data = Data()
+        func append(_ chunk: Data) {
+            lock.lock(); defer { lock.unlock() }
+            if data.count < 4096 { data.append(chunk.prefix(4096 - data.count)) }
         }
-        return nil
+        var firstLine: String? {
+            lock.lock(); defer { lock.unlock() }
+            let text = String(decoding: data, as: UTF8.self)
+            // `defaults` prefixes a timestamp and pid; the message is what follows the first "] ".
+            let line = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+            guard var line else { return nil }
+            if let bracket = line.range(of: "] ") { line = String(line[bracket.upperBound...]) }
+            return line.isEmpty ? nil : line
+        }
     }
 
     /// Waits for `p` to exit, at most `timeout`. On expiry the child is terminated, then killed
@@ -212,5 +383,22 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
         }
         p.waitUntilExit()
         return false
+    }
+
+    // MARK: Users
+
+    /// The user at the console (nil at the login window or when no one is logged in).
+    static func consoleUser() -> (name: String, uid: uid_t)? {
+        var uid: uid_t = 0
+        var gid: gid_t = 0
+        guard let name = SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) as String?,
+              name != "loginwindow", uid != 0 else { return nil }
+        return (name, uid)
+    }
+
+    static func homeDirectory(uid: uid_t) -> String? {
+        guard let pw = getpwuid(uid), let dir = pw.pointee.pw_dir else { return nil }
+        let home = String(cString: dir)
+        return home.isEmpty ? nil : home
     }
 }

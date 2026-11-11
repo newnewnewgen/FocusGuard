@@ -38,7 +38,7 @@ final class Daemon {
             dns: DSCacheFlusher(),
             processes: LibprocProcessController(),
             log: log,
-            chrome: CFChromePolicyWriter(),
+            chrome: CFChromePolicyWriter(log: log),
             clockState: lastSavedClockState,
             resolver: ConfigResolver(lastGood: lastSavedLastGood),
             zone: lastSavedZone.flatMap(TimeZone.init(identifier:)),

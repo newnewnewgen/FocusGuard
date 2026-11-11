@@ -26,6 +26,9 @@ public enum Paths {
     /// Ownership record for Chrome's URLBlocklist key, 0644: the patterns the daemon last wrote,
     /// so a restart can tell its own key from a user's. Absent when FocusGuard holds no key.
     public static let chromePolicy = stateDir + "/chrome-policy.json"
+    /// The plist `defaults import` reads for the user-domain mirror of that key, 0644 so the
+    /// console user can read it; rewritten before every mirror write.
+    public static let chromeUserImport = stateDir + "/chrome-user-import.plist"
     /// Where state lived before 0.4.0, inside the user-writable support dir; migrated once.
     public static let legacyStateDir = supportDir + "/state"
 

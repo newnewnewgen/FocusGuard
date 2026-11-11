@@ -97,12 +97,30 @@ enum ConfigFile {
         return writeRootFile(Paths.learned, data, mode: 0o644)
     }
 
-    /// Temp file + rename so a reader (the app watches status.json) never sees a partial file.
-    /// The mode is set explicitly: `createFile` applies the umask to the attribute it is given.
+    /// Temp file + fsync + rename so a reader (the app watches status.json) never sees a partial
+    /// file, and a crash right after the rename cannot leave an empty one: the ownership record
+    /// for Chrome's key must survive a power cut, or the key reads as someone else's forever.
+    /// The mode is set explicitly, after the umask has applied to the open.
     static func writeRootFile(_ path: String, _ data: Data, mode: Int) -> Bool {
         let tmp = path + ".tmp"
-        guard FileManager.default.createFile(atPath: tmp, contents: data) else { return false }
-        chmod(tmp, mode_t(mode))
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return false }
+        var written = 0
+        let ok = data.withUnsafeBytes { buf -> Bool in
+            while written < buf.count {
+                let n = write(fd, buf.baseAddress! + written, buf.count - written)
+                if n < 0, errno == EINTR { continue }
+                if n <= 0 { return false }
+                written += n
+            }
+            return true
+        }
+        guard ok, fsync(fd) == 0, fchmod(fd, mode_t(mode)) == 0 else {
+            close(fd)
+            unlink(tmp)
+            return false
+        }
+        close(fd)
         guard rename(tmp, path) == 0 else {
             unlink(tmp)
             return false
