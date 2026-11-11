@@ -99,7 +99,7 @@ enum ConfigFile {
 
     /// Temp file + rename so a reader (the app watches status.json) never sees a partial file.
     /// The mode is set explicitly: `createFile` applies the umask to the attribute it is given.
-    private static func writeRootFile(_ path: String, _ data: Data, mode: Int) -> Bool {
+    static func writeRootFile(_ path: String, _ data: Data, mode: Int) -> Bool {
         let tmp = path + ".tmp"
         guard FileManager.default.createFile(atPath: tmp, contents: data) else { return false }
         chmod(tmp, mode_t(mode))

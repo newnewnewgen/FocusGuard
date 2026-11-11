@@ -38,6 +38,7 @@ final class Daemon {
             dns: DSCacheFlusher(),
             processes: LibprocProcessController(),
             log: log,
+            chrome: CFChromePolicyWriter(),
             clockState: lastSavedClockState,
             resolver: ConfigResolver(lastGood: lastSavedLastGood),
             zone: lastSavedZone.flatMap(TimeZone.init(identifier:)),
@@ -47,6 +48,7 @@ final class Daemon {
 
     /// One reconcile pass. Safe to call from `once` or from the timer.
     func tick() {
+        let previousChrome = lastSavedStatus?.chrome
         let live = ConfigFile.load(log: log)
         let clock = SystemClock.sample()
         // Foundation caches the system zone for the life of the process unless told to look again.
@@ -82,12 +84,13 @@ final class Daemon {
         let status = DaemonStatus(
             pid: getpid(), source: result.source,
             clockOffsetSeconds: DaemonStatus.publishedOffset(trusted: result.trusted, wall: clock.wall, tampered: result.clockTampered),
-            clockTampered: result.clockTampered, timeZone: result.timeZone, dnsWatch: watcher.state)
+            clockTampered: result.clockTampered, timeZone: result.timeZone, dnsWatch: watcher.state,
+            chrome: result.chrome)
         if status != lastSavedStatus, ConfigFile.saveStatus(status) {
             lastSavedStatus = status
         }
-        if result.hostsChanged || !result.terminated.isEmpty || !result.killed.isEmpty {
-            log.info("tick: source=\(result.source.rawValue) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count)")
+        if result.hostsChanged || !result.terminated.isEmpty || !result.killed.isEmpty || result.chrome != previousChrome {
+            log.info("tick: source=\(result.source.rawValue) domains=\(result.activeSet.domains.count) apps=\(result.activeSet.bundleIDs.count) chrome=\(result.activeSet.chromeURLs.count) (\(result.chrome))")
         }
         reschedule(interval: result.activeSet.bundleIDs.isEmpty ? Self.idleTick : Self.activeTick)
     }

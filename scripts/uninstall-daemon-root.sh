@@ -20,6 +20,16 @@ if loaded; then
 fi
 
 rm -f "/Library/LaunchDaemons/$LABEL.plist" "/Library/PrivilegedHelperTools/$LABEL" /usr/local/libexec/focusguardd
+# The daemon removes its Chrome URLBlocklist key on SIGTERM. If it was killed instead, the
+# ownership record is still here and the key is ours to remove (never anyone else's).
+if [ -f /var/db/FocusGuard/chrome-policy.json ]; then
+    defaults delete /Library/Preferences/com.google.Chrome URLBlocklist 2>/dev/null || true
+    console_user=$(stat -f %Su /dev/console 2>/dev/null || true)
+    if [ -n "$console_user" ] && [ "$console_user" != root ]; then
+        console_uid=$(id -u "$console_user")
+        launchctl asuser "$console_uid" sudo -n -u "$console_user" defaults delete com.google.Chrome URLBlocklist 2>/dev/null || true
+    fi
+fi
 rm -rf /var/db/FocusGuard "/Library/Application Support/FocusGuard/state"
 
 # Belt and braces: if the daemon was killed rather than stopped, its region is still in
