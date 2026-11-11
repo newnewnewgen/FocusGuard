@@ -2,7 +2,7 @@ import Foundation
 
 /// Site names the daemon has seen looked up that matched a keyword rule (keyword spec §4).
 /// Only matches are ever stored, never general lookup history. Persisted root-owned by the
-/// daemon; readable by the app for "Blocked so far".
+/// daemon; readable by the app.
 public struct LearnedNames: Codable, Equatable {
     public static let cap = 2000
 
