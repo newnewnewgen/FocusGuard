@@ -24,6 +24,19 @@ final class ChromePolicyFilesTests: XCTestCase {
                                         uid: 501, name: "newgen")
         let data = try XCTUnwrap(record.encode())
         XCTAssertEqual(ChromePolicyRecord.decode(data), record)
+        XCTAssertNil(ChromePolicyRecord.decode(data)?.staleMirrorUID)
+    }
+
+    func testRecordRoundTripsAStaleMirrorUser() throws {
+        // A previous user's mirror could not be removed when the console user changed: the
+        // record keeps naming them so clear and the uninstall script try again.
+        var record = ChromePolicyRecord(patterns: ["chrome://extensions/*"],
+                                        writtenAt: Date(timeIntervalSince1970: 1_700_000_000),
+                                        uid: 502, name: "other")
+        record.staleMirrorUID = 501
+        let data = try XCTUnwrap(record.encode())
+        XCTAssertEqual(ChromePolicyRecord.decode(data)?.staleMirrorUID, 501)
+        XCTAssertEqual(ChromePolicyRecord.decode(data), record)
     }
 
     func testRecordWithoutUserDecodes() throws {

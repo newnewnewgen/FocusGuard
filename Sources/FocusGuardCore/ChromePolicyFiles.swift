@@ -4,18 +4,22 @@ import Foundation
 /// Ownership record for Chrome's `URLBlocklist` key (`Paths.chromePolicy`, chrome pages spec §3):
 /// the patterns the daemon last wrote and whose user domain holds the mirror, so a restarted
 /// daemon updates or removes exactly what it wrote. `uid`/`name` are nil in records written
-/// before 0.5.1; the daemon then falls back to the console user.
+/// before 0.6.0; the daemon then falls back to the console user. `staleMirrorUID` names a
+/// previous user whose mirror could not be removed when the console user changed: `clear` and
+/// the uninstall script try that user's domain too. Absent in records written before it existed.
 public struct ChromePolicyRecord: Codable, Equatable {
     public var patterns: [String]
     public var writtenAt: Date
     public var uid: uid_t?
     public var name: String?
+    public var staleMirrorUID: uid_t?
 
-    public init(patterns: [String], writtenAt: Date, uid: uid_t?, name: String?) {
+    public init(patterns: [String], writtenAt: Date, uid: uid_t?, name: String?, staleMirrorUID: uid_t? = nil) {
         self.patterns = patterns
         self.writtenAt = writtenAt
         self.uid = uid
         self.name = name
+        self.staleMirrorUID = staleMirrorUID
     }
 
     public func encode() -> Data? { try? JSONEncoder().encode(self) }

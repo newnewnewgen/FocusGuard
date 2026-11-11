@@ -95,39 +95,76 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
     /// is touched, so no step that fails after it (retried next tick; `apply` is idempotent)
     /// can leave a key of ours that a restarted daemon would take for someone else's. The
     /// record is the intent: one with no key behind it is harmless, as `clear` on an absent key
-    /// is a no-op. One exception precedes it: a record naming a *different* user's domain means
-    /// that user's copy is ours to remove first, and the record must keep naming them until it is.
+    /// is a no-op. A record naming a *different* user's domain (or a `staleMirrorUID` from an
+    /// earlier such failure) means that user's copy is ours to remove too. The console user is
+    /// served first — the record (which already names the other user as `staleMirrorUID`), the
+    /// durable copy and their mirror — and only then is the other user's copy removed: a failed
+    /// removal arms the spawn backoff, and done first it would hold the console user's mirror
+    /// for a window. If it fails the record keeps naming them so `clear` and the uninstall
+    /// script try again, and their leftover is logged once; it reaches the status line only
+    /// through the backoff, if a write is wanted within its window.
+    ///
+    /// During the spawn backoff (spec §7) nothing is touched: the held reason is returned before
+    /// the record, the system domain or the import plist, so a persistent child failure costs
+    /// one timeout per window, not a record save and a cfprefsd round trip per tick.
     func apply(patterns: [String]) -> String? {
+        if let held = Self.heldReason() { return held }
         let console = Self.consoleUser()
-        if Self.alsoWritesUserDomain, case .record(let previous) = Self.loadRecord(),
-           let previousUID = previous.uid, previousUID != console?.uid {
-            if let reason = deleteUserDomain(uid: previousUID) {
-                return "previous user \(previous.name ?? "#\(previousUID)"): \(reason)"
-            }
+        let previous = Self.loadRecord()
+        var others: [uid_t] = []
+        var previousUser: (name: String, uid: uid_t)?
+        if Self.alsoWritesUserDomain, case .record(let record) = previous {
+            others = Self.otherMirrors(of: record, console: console?.uid)
+            if let uid = record.uid, let name = record.name { previousUser = (name, uid) }
         }
-        guard saveRecord(patterns, user: console) else { return "could not write \(Paths.chromePolicy)" }
+        var record = ChromePolicyRecord(patterns: patterns, writtenAt: Date(),
+                                        uid: Self.alsoWritesUserDomain ? console?.uid : nil,
+                                        name: Self.alsoWritesUserDomain ? console?.name : nil,
+                                        staleMirrorUID: others.first)
+        guard saveRecord(record, unless: previous) else { return "could not write \(Paths.chromePolicy)" }
         CFPreferencesSetValue(Self.key, patterns as CFArray, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) else {
             return "CFPreferencesSynchronize failed for the system domain"
         }
         if Self.alsoWritesUserDomain, let console, let reason = importUserDomain(patterns, uid: console.uid) { return reason }
+        var stale: uid_t?
+        for uid in others {
+            guard let reason = deleteUserDomain(uid: uid) else { continue }
+            if stale == nil { stale = uid }
+            if Self.shouldLogStale(uid: uid) {
+                let who = previousUser?.uid == uid ? "\(previousUser!.name) (#\(uid))" : "#\(uid)"
+                log?.error("chrome: previous user \(who): \(reason); their copy is retried when the key is cleared")
+            }
+        }
+        if stale != record.staleMirrorUID {
+            record.staleMirrorUID = stale
+            _ = saveRecord(record, unless: .absent)   // best effort: the key is already in place
+        }
         return nil
     }
 
     /// The record goes last here, for the same reason: while any copy of the key may still be
     /// ours, the record must say so. The user copy is removed from the domain the record names
-    /// (the console user's for a record from before the field existed), and the record is kept
-    /// — retried next tick — until a bounded read of that user's plist shows the key gone.
+    /// (the console user's for a record from before the field existed) and from a stale mirror
+    /// the record remembers, and the record is kept — retried next tick — until a bounded read
+    /// of each user's plist shows the key gone.
     func clear() -> String? {
+        if let held = Self.heldReason() { return held }
         CFPreferencesSetValue(Self.key, nil, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) else {
             return "CFPreferencesSynchronize failed for the system domain"
         }
         if Self.alsoWritesUserDomain {
-            var target: uid_t? = Self.consoleUser()?.uid
-            if case .record(let record) = Self.loadRecord(), let uid = record.uid { target = uid }
+            var targets: [uid_t] = []
+            if case .record(let record) = Self.loadRecord() {
+                if let uid = record.uid { targets.append(uid) }
+                if let stale = record.staleMirrorUID, !targets.contains(stale) { targets.append(stale) }
+            }
             // Neither a recorded user nor a console user: nothing was mirrored, nothing to remove.
-            if let target, let reason = deleteUserDomain(uid: target) { return reason }
+            if targets.isEmpty, let console = Self.consoleUser() { targets.append(console.uid) }
+            for uid in targets {
+                if let reason = deleteUserDomain(uid: uid) { return reason }
+            }
         }
         if unlink(Paths.chromePolicy) != 0, errno != ENOENT { return "could not remove \(Paths.chromePolicy)" }
         return nil
@@ -159,12 +196,35 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
         return .record(record)
     }
 
-    private func saveRecord(_ patterns: [String], user: (name: String, uid: uid_t)?) -> Bool {
-        let record = ChromePolicyRecord(patterns: patterns, writtenAt: Date(),
-                                        uid: Self.alsoWritesUserDomain ? user?.uid : nil,
-                                        name: Self.alsoWritesUserDomain ? user?.name : nil)
+    /// Mirrors the record names other than the console user's: the previous user when the
+    /// console changed, and a stale one remembered from an earlier failed removal.
+    private static func otherMirrors(of record: ChromePolicyRecord, console: uid_t?) -> [uid_t] {
+        var uids: [uid_t] = []
+        for uid in [record.uid, record.staleMirrorUID].compactMap({ $0 }) where uid != console && !uids.contains(uid) {
+            uids.append(uid)
+        }
+        return uids
+    }
+
+    /// Writes `record` unless `existing` already says the same thing (`writtenAt` aside): a
+    /// re-assert of an unchanged set is then no file write at all.
+    private func saveRecord(_ record: ChromePolicyRecord, unless existing: RecordState) -> Bool {
+        if case .record(let current) = existing, current.patterns == record.patterns, current.uid == record.uid,
+           current.name == record.name, current.staleMirrorUID == record.staleMirrorUID {
+            return true
+        }
         guard let data = record.encode() else { return false }
         return ConfigFile.writeRootFile(Paths.chromePolicy, data, mode: 0o644)
+    }
+
+    /// One log line per stale user, however many applies find their copy still there.
+    private static let staleLock = NSLock()
+    private static var staleLogged: uid_t?
+    private static func shouldLogStale(uid: uid_t) -> Bool {
+        staleLock.lock(); defer { staleLock.unlock() }
+        guard staleLogged != uid else { return false }
+        staleLogged = uid
+        return true
     }
 
     // MARK: User copy
@@ -276,6 +336,10 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
     private static let backoffLock = NSLock()
     private static var backoff = SpawnBackoff(window: spawnBackoff)
 
+    private static func heldReason() -> String? {
+        backoffLock.lock(); defer { backoffLock.unlock() }
+        return backoff.heldReason(now: Date())
+    }
     private static func failed(_ reason: String) -> String {
         backoffLock.lock(); defer { backoffLock.unlock() }
         backoff.failed(reason, at: Date())
@@ -298,10 +362,7 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
     /// the backoff applied. `.failure` is a reason already recorded as a failure (held, could not
     /// launch, timed out); `.success` is an exit the caller judges.
     private static func runDefaults(uid: uid_t, _ args: [String], label: String) -> Result<Spawn.Exit, StringReason> {
-        backoffLock.lock()
-        let held = backoff.heldReason(now: Date())
-        backoffLock.unlock()
-        if let held { return .failure(StringReason(held)) }
+        if let held = heldReason() { return .failure(StringReason(held)) }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
@@ -332,10 +393,26 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
         // The read end is closed when the Pipe goes away, not here: a handler call still in
         // flight must never find a closed descriptor.
         stderr.fileHandleForReading.readabilityHandler = nil
+        // The handler runs on its own queue and may not have been scheduled for the child's
+        // last write before it exited: one non-blocking drain so the exit reason is not lost.
+        drain(stderr.fileHandleForReading.fileDescriptor, into: captured)
         guard finished else {
             return .failure(StringReason(failed("\(label) (user domain) timed out after \(Int(userDomainTimeout)) s")))
         }
         return .success(Spawn.Exit(status: p.terminationStatus, stderr: captured.firstLine))
+    }
+
+    /// Reads whatever is already in the pipe without waiting for more.
+    private static func drain(_ fd: Int32, into buffer: StderrBuffer) {
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return }
+        var chunk = [UInt8](repeating: 0, count: 1024)
+        while true {
+            let n = Darwin.read(fd, &chunk, chunk.count)
+            if n < 0, errno == EINTR { continue }
+            guard n > 0 else { return }   // 0: closed; EAGAIN: nothing more right now
+            buffer.append(Data(chunk[0..<n]))
+        }
     }
 
     private struct StringReason: Error {
