@@ -9,13 +9,20 @@ struct BlockListsTab: View {
 
     var body: some View {
         NavigationSplitView {
-            List(lists, selection: $selection) { list in
-                HStack {
-                    Text(list.name)
-                    Spacer()
-                    if model.mode(forList: list.id) != nil { Image(systemName: "shield.fill").foregroundStyle(.secondary) }
+            List(selection: $selection) {
+                ForEach(lists) { list in
+                    HStack {
+                        Text(list.name)
+                        if list.id == lists.first?.id {
+                            // The first list is the one a new window attaches to (spec §6).
+                            Text("Default").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if model.mode(forList: list.id) != nil { Image(systemName: "shield.fill").foregroundStyle(.secondary) }
+                    }
+                    .tag(list.id)
                 }
-                .tag(list.id)
+                .onMove(perform: model.config == nil ? nil : moveLists)
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 200)
             .safeAreaInset(edge: .bottom) {
@@ -47,6 +54,11 @@ struct BlockListsTab: View {
     private func removeSelected() {
         guard let id = selection else { return }
         if model.apply({ $0.removeList(id: id) }) == .applied { selection = lists.first?.id }
+    }
+
+    /// One `apply` for the whole move; it changes no window, so it is never challenged or locked.
+    private func moveLists(from source: IndexSet, to destination: Int) {
+        model.apply { $0.moveLists(fromOffsets: source, toOffset: destination) }
     }
 }
 

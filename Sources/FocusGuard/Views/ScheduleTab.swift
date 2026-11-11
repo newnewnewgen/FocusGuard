@@ -29,10 +29,8 @@ struct ScheduleTab: View {
     }
 
     private func addWindow() {
-        let lists = model.config?.blockLists.map(\.id) ?? []
-        let w = ScheduleWindow(name: "Deep work", days: [.mon, .tue, .wed, .thu, .fri],
-                               start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!, blockListIDs: lists)
-        model.apply { $0.schedules.append(w) }
+        // Two statements: `$0.schedules.append($0.newWindow())` would be an overlapping access.
+        model.apply { let w = $0.newWindow(); $0.schedules.append(w) }
     }
 }
 
