@@ -122,10 +122,21 @@ that user's plist under the bounded guard, and only unlinks the record once the 
 If it is still there — or cannot be read — the reason (with the first line of the child's
 stderr) goes to status and the record stays, so the next tick retries; a blocklist is never
 orphaned in a user's Chrome. `apply` with a record naming a *different* uid than the console
-user first removes that user's mirror the same way, before writing the new record; if that
-removal fails the tick reports it and nothing else is written, so the record keeps naming the
-user whose copy is still out there. `scripts/uninstall-daemon-root.sh` reads the uid from the
-record and falls back to the console user.
+user (someone else logged in while the record still names a user who logged out) serves the
+console user first — the new record, the system domain and their mirror — and then removes
+the previous user's mirror the same way. The console user is never left unprotected by the
+other user's failure: if that removal fails, the new record remembers the other user as
+`staleMirrorUID`, the daemon logs it once, and `clear` (and the uninstall script) remove that
+user's mirror too, retrying until a bounded read shows it gone. The removal is attempted after
+the console user's mirror because a failed child arms the spawn backoff (§7), which done first
+would hold the console user's mirror for a window. The record is saved only when it would
+differ from the one on disk (patterns, user, stale user): a re-assert of an unchanged set is
+no file write. `scripts/uninstall-daemon-root.sh` reads the uid (and `staleMirrorUID`) from
+the record and falls back to the console user.
+
+A key left by a write of ours that failed part-way — the system domain set, the record never
+saved — is still ours: the window ending (and SIGTERM) clears it, as `clear` on an absent key
+is a no-op.
 
 **The daemon never writes the key when it has nothing to block and never wrote it before**, so
 a user who sets `URLBlocklist` themselves for other reasons is not clobbered: on first run, if
@@ -184,8 +195,11 @@ set changes (window start/end, edit) or the user copy was deleted; `CFPreference
 is a cfprefsd round trip, microseconds, and the user-domain mirror is one short-lived
 `defaults` process per write, allowed 10 s before it is killed. A child that fails (non-zero
 exit, could not launch, timed out) puts every user-domain spawn on a **30 s backoff**: until it
-elapses, `apply`/`clear` return the last reason without spawning, so a persistent failure
-costs at most one timeout per 30 s rather than one per 2 s tick.
+elapses, `apply`/`clear` return the last reason at once — before the record, the system
+domain or the import plist are touched — so a persistent failure costs at most one timeout
+per 30 s rather than a timeout, a record save, a cfprefsd round trip and an import-plist write
+per 2 s tick. A window ending inside the backoff removes the key when it elapses, at most
+30 s late.
 
 ## 8. Testing
 
