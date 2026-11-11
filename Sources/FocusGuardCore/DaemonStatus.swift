@@ -3,7 +3,7 @@ import Foundation
 /// The one version string, logged by the daemon and compared by the app to tell whether the
 /// installed daemon is the one this app ships. Keep in step with CFBundleShortVersionString.
 public enum FocusGuardVersion {
-    public static let current = "0.5.0"
+    public static let current = "0.6.0"
 }
 
 /// What the daemon tells the app, in a root-owned, world-readable file the user cannot forge.
