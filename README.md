@@ -103,6 +103,29 @@ about a minute. Sites you have visited before, inside or outside a window, are k
 Encrypted DNS configured system-wide and iCloud Private Relay hide lookups from the daemon,
 as they already hide them from the hosts layer. VPNs that use `ipsec*` or `ppp*` interfaces rather than `utun*` are not watched.
 
+## Chrome pages
+
+Site rules cannot reach pages inside Chrome that never cause a lookup: an extension's own pages
+(`chrome-extension://<id>/…`) and Chrome's internal pages (`chrome://extensions`,
+`chrome://settings`). A block list's **Chrome pages** are patterns for Chrome's own
+`URLBlocklist` policy — `chrome://extensions/*`, `chrome-extension://<id>/*`, or a site name — and
+**Add extension…** lists what is installed and adds both patterns for one. While a window with
+Chrome patterns is active the daemon writes them to Chrome's policy preference; Chrome shows
+those pages as blocked by an administrator. When the window ends the key is removed. Other
+browsers are not affected. If something else has already set `URLBlocklist` in
+`/Library/Preferences/com.google.Chrome.plist`, FocusGuard leaves it alone and the Status tab
+says so.
+
+Chrome picks up a key added to that system-level file but does not notice its removal, so the
+daemon writes both copies: the system copy in `/Library/Preferences/com.google.Chrome.plist`
+(root-only to change) is the durable one, and a copy in your own Chrome preferences
+(`~/Library/Preferences/com.google.Chrome.plist`, written as you) is the one Chrome watches.
+You can delete your copy without a password; the daemon puts it back on its next tick, within
+30 s (2 s while an app block is active), and Chrome keeps reading the system copy in between.
+Which user holds the copy is recorded in `/var/db/FocusGuard/chrome-policy.json`, so it is
+removed from the same account when the window ends. With nobody logged in there is nothing to
+mirror and the system copy alone is in place.
+
 ## How enforcement works
 
 - **Sites:** a marked region in `/etc/hosts` (`# FOCUSGUARD START` … `END`) with `0.0.0.0`
@@ -115,19 +138,24 @@ as they already hide them from the hosts layer. VPNs that use `ipsec*` or `ppp*`
   else and works with the app closed. **Blocked apps are force-quit; unsaved work in them is
   lost.** Finder, the Dock and a few other system processes can never be blocked (macOS
   relaunches them instantly, which would be a kill loop).
-- **Chrome pages:** Chrome's `URLBlocklist` policy, written to `/Library/Preferences/com.google.Chrome.plist`
-  (root-only, the durable copy) and mirrored into the signed-in user's own Chrome preferences
-  (the copy Chrome watches live). A window boundary reaches Chrome within about 30 s (the
-  daemon's idle tick, then Chrome's own policy refresh of a few seconds). If the user
-  copy is deleted, the daemon re-asserts it on its next tick: within 2 s while an app block is
-  active, otherwise within 30 s. FocusGuard never touches a `URLBlocklist` it did not write.
+- **Chrome pages:** Chrome's `URLBlocklist` policy, written in-process through CFPreferences
+  to `/Library/Preferences/com.google.Chrome.plist` (root-only, the durable copy) and mirrored
+  into the logged-in user's own Chrome preferences as that user, with `defaults import` (the
+  copy Chrome watches live). Written only when the active pattern set changes, and again when
+  the user copy has gone missing: within 2 s while an app block is active, otherwise within
+  30 s. A window boundary reaches Chrome within about 30 s (the daemon's idle tick, then
+  Chrome's own policy refresh of a few seconds). An ownership record in
+  `/var/db/FocusGuard/chrome-policy.json` names the patterns and the user whose copy mirrors
+  them, so a restarted daemon never removes a key it did not write, and removes the mirror from
+  the account it wrote it for. FocusGuard never touches a `URLBlocklist` it did not write.
 - **Clock:** the daemon projects schedule time from a persisted anchor along
   `mach_continuous_time`; a wall-clock jump in either direction is ignored for 24 h. The app
   reads the daemon's clock, so its locks agree.
 - **Unreadable or missing config** is fail-closed: the accepted config stays in force until
   the window that was active at the time ends (at most 24 h), and through every Impossible
   window after that. A config with duplicate ids, or larger than the limits in
-  `Config.Limits` (512 KB, 48 windows, 32 lists, 2000 sites, 300 apps), counts as unreadable.
+  `Config.Limits` (512 KB, 48 windows, 32 lists, 2000 sites, 300 apps, 200 keywords, 200 Chrome
+  patterns), counts as unreadable.
 
 ## Recovery
 
@@ -159,6 +187,8 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
 - Chrome pages: the user-domain copy of the policy can be deleted without a password, and is
   re-asserted within 30 s (2 s while an app block is active). A determined loop can keep
   deleting it, which the hosts region cannot suffer; the root-owned system copy stays.
+- Chrome pages cover Google Chrome only. Brave, Edge, Arc and Vivaldi use the same policy under
+  other preference domains (a follow-up); Safari and Firefox have no equivalent without a profile.
 - An admin user with `sudo` can always dismantle it. With Impossible windows that is the only
   way; it is strong friction, not a wall.
 
@@ -171,6 +201,10 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
 without a password and checks it holds, then releases by itself (~6 minutes, no `sudo`).
 
 `scripts/verify-keywords.sh` checks keyword rules, learning, the allow list and the Impossible hold (~2 minutes, no `sudo`).
+
+`scripts/verify-chrome.sh` checks Chrome pages: the policy preference follows a window in both
+domains, your deleted copy is re-asserted, Chrome blocks the page (it asks you), and an
+Impossible window holds a pattern (~4 minutes, no `sudo`, Chrome running).
 
 Daemon-only acceptance scripts (need `sudo`): `scripts/verify-once.sh` (single pass, no
 launchd), `scripts/verify-launchd.sh` (installed daemon, ~5 minutes), `scripts/verify-teardown.sh`

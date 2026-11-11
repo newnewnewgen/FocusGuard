@@ -1,6 +1,6 @@
 # Chrome pages — design
 
-**Date:** 2026-11-11 · **Status:** approved; §3 settled by the probe on 2026-11-11 — **write both domains** (variant B)
+**Date:** 2026-11-11 · **Status:** implemented in 0.6.0 (plan `2026-11-11-chrome-pages.md`); §3 settled by the probe on 2026-11-11 — **write both domains** (variant B); live acceptance `scripts/verify-chrome.sh` pending
 **Builds on:** `2026-08-18-focusguard-design.md` §11 (install and lock model), `2026-11-06-keyword-blocking-design.md` (list item types, Add many…)
 
 ## 1. Purpose
