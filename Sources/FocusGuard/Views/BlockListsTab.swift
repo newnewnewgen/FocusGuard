@@ -62,6 +62,9 @@ struct BlockListDetail: View {
     @State private var newAllow = ""
     @State private var allowHint: String?
     @State private var showAddApp = false
+    @State private var newChromeURL = ""
+    @State private var chromeHint: String?
+    @State private var showAddExtension = false
     @State private var bulkKind: BulkAddSheet.Kind?
     @FocusState private var nameFocused: Bool
     /// Bumped on every refused edit; `.id(refused)` rebuilds the form from the saved config.
@@ -78,7 +81,7 @@ struct BlockListDetail: View {
                         .focused($nameFocused)
                         .onSubmit(commitName)
                         .onChange(of: nameFocused) { _, focused in if !focused { commitName() } }
-                        .onChange(of: list.id) { _, _ in name = list.name; newDomain = "" }
+                        .onChange(of: list.id) { _, _ in name = list.name; newDomain = ""; newChromeURL = "" }
                         .onChange(of: list.name) { _, n in name = n }
                     ProtectionBadge(mode: mode, until: model.lockState.lockedUntil)
                 }
@@ -158,6 +161,27 @@ struct BlockListDetail: View {
             }
 
             Section {
+                ForEach(unique(list.chromeURLs), id: \.self) { pattern in
+                    HStack {
+                        Text(pattern).font(.system(.body, design: .monospaced))
+                            .lineLimit(1).truncationMode(.middle).help(pattern)
+                        Spacer()
+                        removeButton { commit { $0.update(list: list.id) { $0.chromeURLs.removeAll { $0 == pattern } } } }
+                    }
+                }
+                AddRow("chrome-extension://\u{2026} or chrome://extensions/*", text: $newChromeURL, onSubmit: addChromeURL) {
+                } accessory: {
+                    Button("Add extension\u{2026}") { showAddExtension = true }
+                    Button("Add many\u{2026}") { bulkKind = .chromeURLs }
+                }
+                if let hint = chromeHint { Text(hint).font(.caption).foregroundStyle(.red) }
+            } header: {
+                Text("Chrome pages")
+            } footer: {
+                Text("Blocks pages inside Chrome itself. Chrome shows them as blocked by an administrator. Other browsers are not affected.")
+            }
+
+            Section {
                 ForEach(unique(model.config?.alwaysAllow ?? []), id: \.self) { site in
                     HStack {
                         Text(site)
@@ -185,6 +209,13 @@ struct BlockListDetail: View {
                 } }
             }
         }
+        .sheet(isPresented: $showAddExtension) {
+            AddExtensionSheet(alreadyAdded: Set(list.chromeURLs)) { patterns in
+                commit { $0.update(list: list.id) { l in
+                    for p in patterns where !l.chromeURLs.contains(p) { l.chromeURLs.append(p) }
+                } }
+            }
+        }
         .sheet(item: $bulkKind) { kind in
             let lists = model.config?.blockLists ?? []
             switch kind {
@@ -204,6 +235,13 @@ struct BlockListDetail: View {
                             let rule = KeywordRule(text: w, match: match)
                             if !l.keywords.contains(where: { $0.itemKey == rule.itemKey }) { l.keywords.append(rule) }
                         }
+                    } }
+                }
+            case .chromeURLs:
+                BulkAddSheet(kind: .chromeURLs, listName: list.name, existing: Set(list.chromeURLs),
+                             totalInConfig: lists.reduce(0) { $0 + $1.chromeURLs.count }) { patterns, _ in
+                    commit { $0.update(list: list.id) { l in
+                        for p in patterns where !l.chromeURLs.contains(p) { l.chromeURLs.append(p) }
                     } }
                 }
             }
@@ -270,6 +308,18 @@ struct BlockListDetail: View {
         let rule = KeywordRule(text: text, match: newMatch)
         commit { $0.update(list: list.id) { l in if !l.keywords.contains(where: { $0.itemKey == rule.itemKey }) { l.keywords.append(rule) } } }
         newKeyword = ""
+    }
+
+    private func addChromeURL() {
+        let typed = newChromeURL.trimmingCharacters(in: .whitespaces)
+        guard !typed.isEmpty else { return }
+        guard let pattern = ChromeURLPattern.normalize(typed) else {
+            chromeHint = "\u{201C}\(typed)\u{201D} is not a Chrome URL pattern. Use a full address like chrome://extensions/* or chrome-extension://<id>/*, or a site like example.com \u{2014} no spaces, at most \(ChromeURLPattern.maxLength) characters."
+            return
+        }
+        chromeHint = nil
+        commit { $0.update(list: list.id) { if !$0.chromeURLs.contains(pattern) { $0.chromeURLs.append(pattern) } } }
+        newChromeURL = ""
     }
 
     private func addAllow() {

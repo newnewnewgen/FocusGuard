@@ -119,6 +119,9 @@ final class AppModel {
     /// What the daemon reports about lookup watching; nil when no daemon status is known.
     var keywordWatch: String? { installer.status?.dnsWatch }
     var hasKeywordRules: Bool { (config ?? .empty).hasKeywordRules }
+    /// What the daemon reports about Chrome's policy preference; nil when no daemon status is known.
+    var chromePages: String? { installer.status?.chrome }
+    var hasChromeURLs: Bool { (config ?? .empty).blockLists.contains { !$0.chromeURLs.isEmpty } }
 
     // MARK: Derived state
 

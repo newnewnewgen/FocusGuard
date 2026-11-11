@@ -6,13 +6,13 @@ import UniformTypeIdentifiers
 /// Paste or import a whole list of sites or keywords and add them to a block list in one edit.
 struct BulkAddSheet: View {
     enum Kind: String, Identifiable {
-        case sites, keywords
+        case sites, keywords, chromeURLs
         var id: String { rawValue }
     }
 
     let kind: Kind
     let listName: String
-    /// What the list already holds: site names for `.sites`, `KeywordRule.itemKey`s for `.keywords`.
+    /// What the list already holds: site names for `.sites`, `KeywordRule.itemKey`s for `.keywords`, patterns for `.chromeURLs`.
     let existing: Set<String>
     /// Items of this kind across every list in the config, the number the limit applies to.
     let totalInConfig: Int
@@ -35,26 +35,42 @@ struct BulkAddSheet: View {
         case .keywords:
             let r = BulkInput.keywords(from: text)
             return (r.accepted, r.rejected)
+        case .chromeURLs:
+            let r = BulkInput.chromeURLs(from: text)
+            return (r.accepted, r.rejected)
         }
     }
 
     private func key(_ item: String) -> String {
-        kind == .sites ? item : KeywordRule(text: item, match: match).itemKey
+        kind == .keywords ? KeywordRule(text: item, match: match).itemKey : item
     }
 
     private var toAdd: [String] { parsed.accepted.filter { !existing.contains(key($0)) } }
     private var alreadyPresent: Int { parsed.accepted.count - toAdd.count }
     private var skipped: [String] { parsed.rejected }
 
-    private var limit: Int { kind == .sites ? Config.Limits.maxDomains : Config.Limits.maxKeywords }
+    private var limit: Int {
+        switch kind {
+        case .sites: return Config.Limits.maxDomains
+        case .keywords: return Config.Limits.maxKeywords
+        case .chromeURLs: return Config.Limits.maxChromeURLs
+        }
+    }
     private var overLimit: Bool { totalInConfig + toAdd.count > limit }
 
-    private var noun: String { kind == .sites ? "sites" : "keywords" }
+    private var noun: String {
+        switch kind {
+        case .sites: return "sites"
+        case .keywords: return "keywords"
+        case .chromeURLs: return "Chrome patterns"
+        }
+    }
     private var title: String { "Add \(noun) to \(listName)" }
     private var placeholder: String {
         switch kind {
         case .sites: return "One per line, or paste a list \u{2014} commas, spaces, URLs and hosts-file lines all work."
         case .keywords: return "One per line or separated by spaces/commas."
+        case .chromeURLs: return "One pattern per line, or separated by spaces or commas, e.g. chrome://extensions/* or chrome-extension://<id>/*. No hosts-file handling."
         }
     }
 
