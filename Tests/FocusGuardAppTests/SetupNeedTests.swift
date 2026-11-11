@@ -32,4 +32,28 @@ final class SetupNeedTests: XCTestCase {
         let all: [SetupNeed.Reason] = [.legacyDaemon, .notInstalled, .needsUpdate, .notRunning]
         XCTAssertEqual(Set(all.map(\.title)).count, all.count)
     }
+
+    // MARK: shouldPresent — the "Not now" snooze (review F2)
+
+    func testNotSnoozedFollowsEvaluate() {
+        XCTAssertFalse(SetupNeed.shouldPresent(flags: flags(), snoozed: nil))
+        XCTAssertTrue(SetupNeed.shouldPresent(flags: flags(installed: false, running: false), snoozed: nil))
+    }
+
+    func testSnoozedWithUnchangedFlagsStaysQuiet() {
+        let broken = flags(installed: false, running: false)
+        XCTAssertFalse(SetupNeed.shouldPresent(flags: broken, snoozed: broken))
+    }
+
+    func testSnoozedButFlagsChangedPresentsAgain() {
+        let snoozed = flags(update: true)
+        XCTAssertTrue(SetupNeed.shouldPresent(flags: flags(update: true, running: false), snoozed: snoozed),
+                      "the daemon stopping is a new problem the user has not seen")
+        XCTAssertTrue(SetupNeed.shouldPresent(flags: flags(installed: false, running: false), snoozed: snoozed))
+    }
+
+    func testSnoozedThenHealedNeverPresents() {
+        XCTAssertFalse(SetupNeed.shouldPresent(flags: flags(), snoozed: flags(update: true)),
+                       "healthy is healthy whatever was snoozed")
+    }
 }

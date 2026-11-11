@@ -32,4 +32,14 @@ enum SetupNeed {
         if !f.daemonRunning { return .notRunning }
         return nil
     }
+
+    /// Whether to put the sheet up on its own (launch, `didBecomeActive`). `snoozed` is the
+    /// flags as they were when the user clicked "Not now": while they are unchanged the sheet
+    /// stays down — the user has seen this exact state and declined — and any change (the daemon
+    /// stops, the install lands) is a new state and shows it again. Status → "Setup…" bypasses
+    /// this and always opens the sheet.
+    static func shouldPresent(flags: Flags, snoozed: Flags?) -> Bool {
+        guard evaluate(flags) != nil else { return false }
+        return flags != snoozed
+    }
 }
