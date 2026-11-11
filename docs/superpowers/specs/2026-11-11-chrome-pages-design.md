@@ -30,8 +30,11 @@ A pattern is valid when it is non-empty, has no whitespace or control characters
 host-pattern Chrome accepts (`example.com`, `.exact.host.com`, `*`). `Config.Limits.maxChromeURLs = 200`
 across all lists. Older config files decode with an empty array.
 
-Patterns are kept verbatim (Chrome does its own matching); the app only trims and rejects
-whitespace. Dedup is exact-string.
+Patterns are kept as typed after the scheme (Chrome does its own matching); the app trims,
+lowercases the scheme part (everything before `://`, so `CHROME://flags` is stored as
+`chrome://flags`) and rejects whitespace. A bare host pattern may carry a `:port` tail only
+if it is 1–5 digits (`example.com:8080/path`; `example.com:abc` and `example.com:123456`
+are rejected). Dedup is exact-string on the normalized form.
 
 ## 3. Enforcement
 
@@ -41,8 +44,9 @@ active windows, in sorted order, and makes Chrome's policy preference match it:
 - non-empty → `URLBlocklist` = that array
 - empty → the key is removed
 
-The write happens only when the set differs from what was last written (same change-detection
-as the hosts region). Chrome is told nothing else: no `URLAllowlist`, no extension blocklist.
+The write happens when the set differs from what was last written (same change-detection as
+the hosts region), and again whenever the user-domain copy has gone missing (see the second
+decision rule below). Chrome is told nothing else: no `URLAllowlist`, no extension blocklist.
 
 **Probe result (2026-11-11, `scripts/probe-chrome-policy.sh`):** a key added to the system domain was picked up by Chrome within 15 s without a reload; the same key *removed* was not noticed within 60 s. So the system domain alone would start windows on time and never end them. Decision: **write both domains** (second rule below).
 
@@ -61,20 +65,36 @@ Decision rule:
   hosts region: changing them under an Impossible window needs `sudo`.
 - **Otherwise:** the daemon writes **both** — the system domain as the durable copy, the user
   domain as the one Chrome watches. The user-domain write is done as the console user (the
-  daemon runs `launchctl asuser <uid> /usr/bin/defaults …`), because cfprefsd keys the user
-  domain by uid. Deleting the user copy makes Chrome reload policy, which still finds the
-  system copy; the daemon re-asserts the user copy at the next tick anyway. README states:
-  "Chrome pages: re-asserted within 30 s; a determined loop can keep deleting the preference,
-  which the hosts region cannot suffer."
+  daemon runs `launchctl asuser <uid> sudo -n -u <name> /usr/bin/defaults …`), because cfprefsd
+  keys the user domain by uid. Deleting the user copy makes Chrome reload policy, which still
+  finds the system copy. **Every tick while patterns are active** the daemon checks that the
+  console user's `~/Library/Preferences/com.google.Chrome.plist` still holds the key
+  (`ChromePolicyWriter.userCopyPresent()`: the file is parsed once per distinct mtime+size, so
+  an unchanged file is one `stat`); if it does not, the daemon calls `apply` again with the
+  unchanged set and logs `chrome: user copy was removed; re-asserted` once per episode (a
+  loop deleting it every tick is one episode; the line repeats only after a tick has found the
+  copy in place again). The tick is 2 s while an app block is active and 30 s otherwise, so
+  the copy is back within 2 s or within 30 s respectively. With no console user there is
+  nothing to re-assert; the next tick after someone logs in sees their file. README states
+  this under *How enforcement works* and *Known gaps*: a determined loop can keep deleting
+  the preference, which the hosts region cannot suffer.
 
 In both cases the daemon uses `CFPreferencesSetValue` + `CFPreferencesSynchronize` from Core
 Foundation for the system domain (no shelling out), and records what it wrote in
-`/var/db/FocusGuard/chrome-policy.json` so a restart can tell its own key from a user's.
+`/var/db/FocusGuard/chrome-policy.json` so a restart can tell its own key from a user's. The
+record is saved **before** either domain is touched: it is the intent, and a record with no
+key behind it is harmless (clearing an absent key is a no-op), whereas a key with no record
+would read as someone else's forever.
 
 **The daemon never writes the key when it has nothing to block and never wrote it before**, so
 a user who sets `URLBlocklist` themselves for other reasons is not clobbered: on first run, if
-the key already exists and `chrome-policy.json` is absent, the daemon logs once, leaves the
-key alone, and reports `chrome: not applied (URLBlocklist already set by someone else)`.
+the key already exists **in the system domain** and `chrome-policy.json` is absent, the daemon
+logs once, leaves the key alone, and reports `chrome: not applied (URLBlocklist already set by
+someone else)`. Only the system domain counts for this rule — it is the one nobody can set
+without a password. A user-domain copy alone is never a reason to refuse. The rule is also
+skipped once this daemon process has called `apply` and not since cleared: a key left by a
+write of ours that failed part-way is retried, not refused. The foreign-key log line repeats
+for a new episode after a write of ours has succeeded in between.
 
 Chrome absent (no `/Applications/Google Chrome.app` and no `~/Applications/Google Chrome.app`):
 the daemon still writes the preference (harmless, and Chrome installed later picks it up) and
@@ -111,8 +131,12 @@ key yields `"off"`.
 
 ## 7. Battery
 
-Nothing periodic is added. The plist write happens only when the active pattern set changes
-(window start/end, edit); `CFPreferencesSynchronize` is a cfprefsd round trip, microseconds.
+Outside a window nothing is added: no check, no write. While patterns are active each tick
+costs one `stat` of the console user's `com.google.Chrome.plist` (the parse is cached by
+mtime+size, so it is repeated only when the file changes) plus one `SCDynamicStoreCopyConsoleUser`
+call. The plist write happens when the active pattern set changes (window start/end, edit) or
+the user copy was deleted; `CFPreferencesSynchronize` is a cfprefsd round trip, microseconds,
+and the user-domain mirror is one short-lived `defaults` process per write.
 
 ## 8. Testing
 

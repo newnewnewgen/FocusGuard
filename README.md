@@ -115,6 +115,12 @@ as they already hide them from the hosts layer. VPNs that use `ipsec*` or `ppp*`
   else and works with the app closed. **Blocked apps are force-quit; unsaved work in them is
   lost.** Finder, the Dock and a few other system processes can never be blocked (macOS
   relaunches them instantly, which would be a kill loop).
+- **Chrome pages:** Chrome's `URLBlocklist` policy, written to `/Library/Preferences/com.google.Chrome.plist`
+  (root-only, the durable copy) and mirrored into the signed-in user's own Chrome preferences
+  (the copy Chrome watches live). A window boundary reaches Chrome within about 30 s (the
+  daemon's idle tick, then Chrome's own policy refresh of a few seconds). If the user
+  copy is deleted, the daemon re-asserts it on its next tick: within 2 s while an app block is
+  active, otherwise within 30 s. FocusGuard never touches a `URLBlocklist` it did not write.
 - **Clock:** the daemon projects schedule time from a persisted anchor along
   `mach_continuous_time`; a wall-clock jump in either direction is ignored for 24 h. The app
   reads the daemon's clock, so its locks agree.
@@ -150,6 +156,9 @@ stay in `config.json`. Nothing else in `/etc/hosts` is ever modified.
 - Keyword rules see site names only; a page about manga on a site whose name does not match is not caught.
 - A resolver on 127.0.0.1 (NextDNS, AdGuard Home, dnscrypt-proxy) sends the Mac's queries over
   `lo0`, which is not watched, so keyword learning does not work with a local resolver.
+- Chrome pages: the user-domain copy of the policy can be deleted without a password, and is
+  re-asserted within 30 s (2 s while an app block is active). A determined loop can keep
+  deleting it, which the hosts region cannot suffer; the root-owned system copy stays.
 - An admin user with `sudo` can always dismantle it. With Impossible windows that is the only
   way; it is strong friction, not a wall.
 
