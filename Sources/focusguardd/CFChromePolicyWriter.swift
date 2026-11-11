@@ -61,15 +61,17 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
         return plist["URLBlocklist"] != nil
     }
 
-    /// Order matters for a restart mid-write: the record is saved as soon as the system key is
-    /// ours, so a failed user-domain step (retried next tick; `apply` is idempotent) can never
-    /// leave a key of ours that a restarted daemon would take for someone else's.
+    /// Order matters for a restart mid-write: the record is saved first, before either domain
+    /// is touched, so no step that fails after it (retried next tick; `apply` is idempotent)
+    /// can leave a key of ours that a restarted daemon would take for someone else's. The
+    /// record is the intent: one with no key behind it is harmless, as `clear` on an absent key
+    /// is a no-op.
     func apply(patterns: [String]) -> String? {
+        guard saveRecord(patterns) else { return "could not write \(Paths.chromePolicy)" }
         CFPreferencesSetValue(Self.key, patterns as CFArray, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) else {
             return "CFPreferencesSynchronize failed for the system domain"
         }
-        guard saveRecord(patterns) else { return "could not write \(Paths.chromePolicy)" }
         if Self.alsoWritesUserDomain, let reason = writeUserDomain(patterns) { return reason }
         return nil
     }
