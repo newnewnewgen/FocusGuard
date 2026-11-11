@@ -156,8 +156,8 @@ public final class Reconciler {
         }
     }
 
-    /// Remove our hosts region and, if we wrote it, Chrome's URLBlocklist key. Called on daemon
-    /// shutdown.
+    /// Remove our hosts region and, if we wrote (or tried to write) it, Chrome's URLBlocklist
+    /// key. Called on daemon shutdown.
     public func teardown() {
         _ = reconcileHosts(domains: [])
         pendingKill.removeAll()
@@ -189,7 +189,10 @@ public final class Reconciler {
             chromeLastWritten = chrome.recordedPatterns()
         }
         if wanted.isEmpty {
-            guard chromeLastWritten != nil else { return "off" }
+            // A key left by a write of ours that failed part-way (record never saved, so
+            // chromeLastWritten is still nil) is ours to remove too; `clear` with nothing
+            // behind it is a no-op.
+            guard chromeLastWritten != nil || chromeAttempted else { return "off" }
             if let reason = chrome.clear() { return chromeFailure(reason) }
             chromeLastWritten = nil
             chromeAttempted = false

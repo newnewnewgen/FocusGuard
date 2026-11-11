@@ -157,6 +157,30 @@ final class ReconcilerChromeTests: XCTestCase {
         XCTAssertTrue(log.errors.filter { $0.contains("already set by someone else") }.isEmpty)
     }
 
+    func testWindowEndClearsAKeyLeftByAPartWayFirstWrite() {
+        // The first apply set the system key but failed before the record: chromeLastWritten is
+        // still nil. The window ending must still clear it, or Chrome keeps blocking.
+        chrome.failWith = "user mirror failed"
+        chrome.failLeavesKey = true
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        XCTAssertTrue(chrome.keyIsPresent())
+        chrome.failWith = nil
+        let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(12, 0), monotonic: 7300))
+        XCTAssertEqual(chrome.clears, 1)
+        XCTAssertNil(chrome.present)
+        XCTAssertEqual(r.chrome, "off")
+    }
+
+    func testTeardownClearsAKeyLeftByAPartWayFirstWrite() {
+        chrome.failWith = "user mirror failed"
+        chrome.failLeavesKey = true
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        chrome.failWith = nil
+        sut.teardown()
+        XCTAssertEqual(chrome.clears, 1)
+        XCTAssertNil(chrome.present)
+    }
+
     func testADeletedUserCopyIsReassertedNextTick() {
         _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
         XCTAssertEqual(chrome.applied.count, 1)
