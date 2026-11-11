@@ -24,6 +24,7 @@ struct StatusTab: View {
                     row(done: chrome.hasPrefix("applied"), "Chrome pages: \(chrome)",
                         detail: chrome.hasPrefix("applied") ? "Chrome's URLBlocklist policy holds the patterns of every active window; Chrome shows those pages as blocked by an administrator." :
                                 chrome.hasPrefix("not applied") ? "Something else has set Chrome's URLBlocklist. FocusGuard never overwrites it. To let FocusGuard manage it: sudo defaults delete /Library/Preferences/com.google.Chrome URLBlocklist" :
+                                chrome.hasPrefix("error: ") ? "The daemon could not write Chrome's policy: \(chrome.dropFirst("error: ".count)). It retries every tick." :
                                 "Chrome patterns are written to Chrome's policy when a window that has them starts.")
                 }
                 Text("The background daemon blocks sites and apps whether or not this app is open. The app is where you edit lists and schedules; while it is open, blocked apps close instantly rather than within two seconds.")
