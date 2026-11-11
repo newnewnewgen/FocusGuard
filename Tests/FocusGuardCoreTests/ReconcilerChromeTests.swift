@@ -157,6 +157,43 @@ final class ReconcilerChromeTests: XCTestCase {
         XCTAssertTrue(log.errors.filter { $0.contains("already set by someone else") }.isEmpty)
     }
 
+    func testADeletedUserCopyIsReassertedNextTick() {
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        XCTAssertEqual(chrome.applied.count, 1)
+        chrome.userCopy = false
+        let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 2), monotonic: 102))
+        XCTAssertEqual(chrome.applied, [all, all], "written again, same set")
+        XCTAssertEqual(r.chrome, "applied (3 patterns)")
+        XCTAssertTrue(chrome.userCopyPresent())
+        XCTAssertEqual(log.infos.filter { $0.contains("user copy was removed; re-asserted") }.count, 1)
+        // Present again: no churn.
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 4), monotonic: 104))
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 6), monotonic: 106))
+        XCTAssertEqual(chrome.applied.count, 2)
+    }
+
+    func testAUserDeletingInALoopIsLoggedOncePerEpisode() {
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        for i in 1...3 {
+            chrome.userCopy = false
+            _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 2 * i), monotonic: 100 + Double(2 * i)))
+        }
+        XCTAssertEqual(chrome.applied.count, 4, "every deletion is answered")
+        XCTAssertEqual(log.infos.filter { $0.contains("user copy was removed; re-asserted") }.count, 1, "one episode")
+        // A tick that finds it in place ends the episode; the next deletion is a new one.
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 8), monotonic: 108))
+        chrome.userCopy = false
+        _ = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 10), monotonic: 110))
+        XCTAssertEqual(log.infos.filter { $0.contains("user copy was removed; re-asserted") }.count, 2)
+    }
+
+    func testUserCopyIsNotCheckedWhileNothingIsWanted() {
+        chrome.userCopy = false
+        let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(13, 0), monotonic: 100))
+        XCTAssertEqual(r.chrome, "off")
+        XCTAssertEqual(chrome.applied, [])
+    }
+
     func testChromeNotFoundIsOnlyASuffix() {
         chrome.chromeInstalled = false
         let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))

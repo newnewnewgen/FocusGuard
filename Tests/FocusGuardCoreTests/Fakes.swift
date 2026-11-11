@@ -57,10 +57,14 @@ final class RecordingChromePolicyWriter: ChromePolicyWriter {
     /// With `failWith`: the key was set before the failure (the record was not), as a writer
     /// that died between the two would leave it.
     var failLeavesKey = false
+    /// The user-domain copy. nil: follows `present`; set false to stand for a user who deleted
+    /// it. A successful `apply`/`clear` makes it follow `present` again.
+    var userCopy: Bool?
     var chromeInstalled = true
 
     func recordedPatterns() -> [String]? { record }
     func keyIsPresent() -> Bool { present != nil }
+    func userCopyPresent() -> Bool { userCopy ?? (present != nil) }
     func apply(patterns: [String]) -> String? {
         if let failWith {
             if failLeavesKey { present = patterns }
@@ -69,6 +73,7 @@ final class RecordingChromePolicyWriter: ChromePolicyWriter {
         applied.append(patterns)
         present = patterns
         record = patterns
+        userCopy = nil
         return nil
     }
     func clear() -> String? {
@@ -76,6 +81,7 @@ final class RecordingChromePolicyWriter: ChromePolicyWriter {
         clears += 1
         present = nil
         record = nil
+        userCopy = nil
         return nil
     }
 }

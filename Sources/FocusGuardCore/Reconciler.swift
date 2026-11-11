@@ -62,6 +62,9 @@ public final class Reconciler {
     private var chromeAttempted = false
     private var chromeRecordRead = false
     private var chromeForeignLogged = false
+    /// The user's copy of our key has been seen missing and not yet seen back: one log line per
+    /// such episode, however many ticks it takes (a loop deleting it is one episode).
+    private var chromeUserCopyMissing = false
     private var chromeFailing = false
 
     public init(hosts: HostsFileStore, dns: DNSCacheFlusher, processes: ProcessController, log: ReconcilerLog,
@@ -174,9 +177,11 @@ public final class Reconciler {
         return isNew
     }
 
-    /// Make Chrome's URLBlocklist equal `wanted` (sorted). Writes only when the set differs from
-    /// what was last written, and never touches a key it did not write: on first run with the
-    /// key already set and no record, it logs once and reports "not applied" (chrome pages spec §3).
+    /// Make Chrome's URLBlocklist equal `wanted` (sorted). Writes when the set differs from what
+    /// was last written, or when the user's copy of it (the one Chrome watches) has been deleted
+    /// — re-asserted on the tick that notices, at most one tick after the deletion. Never touches
+    /// a key it did not write: on first run with the key already set and no record, it logs once
+    /// and reports "not applied" (chrome pages spec §3).
     private func reconcileChrome(patterns wanted: [String]) -> String {
         guard let chrome else { return "off" }
         if !chromeRecordRead {
@@ -188,6 +193,7 @@ public final class Reconciler {
             if let reason = chrome.clear() { return chromeFailure(reason) }
             chromeLastWritten = nil
             chromeAttempted = false
+            chromeUserCopyMissing = false
             chromeRecovered()
             log.info("chrome policy removed")
             return "off"
@@ -205,6 +211,16 @@ public final class Reconciler {
             chromeLastWritten = wanted
             chromeRecovered()
             log.info("chrome policy updated: \(wanted.count) pattern(s)")
+        } else if !chrome.userCopyPresent() {
+            chromeAttempted = true
+            if let reason = chrome.apply(patterns: wanted) { return chromeFailure(reason) }
+            chromeRecovered()
+            if !chromeUserCopyMissing {
+                chromeUserCopyMissing = true
+                log.info("chrome: user copy was removed; re-asserted")
+            }
+        } else {
+            chromeUserCopyMissing = false
         }
         return "applied (\(wanted.count) patterns\(chrome.chromeInstalled ? "" : "; Chrome not found"))"
     }

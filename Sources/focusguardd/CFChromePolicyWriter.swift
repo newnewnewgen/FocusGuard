@@ -21,7 +21,9 @@ import SystemConfiguration
 /// `launchctl asuser <uid> sudo -n -u <name> defaults …`. `launchctl asuser` alone only switches
 /// the Mach bootstrap context and would leave `defaults` running as root with root's home;
 /// `sudo -u` (root to user, no password) makes it the user's write. A user can delete that copy,
-/// which makes Chrome reload policy and find the system copy; the next tick re-asserts it anyway.
+/// which makes Chrome reload policy and find the system copy; `userCopyPresent` notices it is
+/// gone (one `stat` of the user's plist per tick while patterns are active) and the Reconciler
+/// re-asserts it on that tick.
 ///
 /// The ownership record `Paths.chromePolicy` holds the patterns last written, so a restarted
 /// daemon knows the key is its own to update or remove; it never touches a key without a record.
@@ -49,16 +51,35 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
         return record.patterns
     }
 
+    /// The system domain only (the foreign-key rule's input): a user's own copy of the key in
+    /// their domain is not a reason to refuse the durable one, which they cannot set.
     func keyIsPresent() -> Bool {
-        if CFPreferencesCopyValue(Self.key, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) != nil { return true }
-        guard Self.alsoWritesUserDomain, let user = Self.consoleUser(),
-              let home = NSHomeDirectoryForUser(user.name) else { return false }
-        // The user's plist read directly: cheap, no process spawn, and `defaults write` flushes
-        // it at once so the file is current.
-        guard let data = FileManager.default.contents(atPath: home + "/Library/Preferences/com.google.Chrome.plist"),
-              let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
-        else { return false }
-        return plist["URLBlocklist"] != nil
+        CFPreferencesCopyValue(Self.key, Self.domain, kCFPreferencesAnyUser, kCFPreferencesAnyHost) != nil
+    }
+
+    /// The console user's plist, read directly: no process spawn, and `defaults write` flushes it
+    /// at once so the file is current. The parse is cached by the file's (mtime, size), so an
+    /// unchanged file costs one `stat` per tick. With no console user there is no copy to keep:
+    /// true, so nothing is retried until someone logs in and the next tick sees their file.
+    func userCopyPresent() -> Bool {
+        guard Self.alsoWritesUserDomain else { return true }
+        guard let user = Self.consoleUser(), let home = NSHomeDirectoryForUser(user.name) else { return true }
+        let path = home + "/Library/Preferences/com.google.Chrome.plist"
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let mtime = attrs[.modificationDate] as? Date, let size = attrs[.size] as? Int else {
+            Self.userPlist.forget()
+            return false
+        }
+        if let known = Self.userPlist.lookup(path: path, mtime: mtime, size: size) { return known }
+        let present: Bool
+        if let data = FileManager.default.contents(atPath: path),
+           let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] {
+            present = plist["URLBlocklist"] != nil
+        } else {
+            present = false
+        }
+        Self.userPlist.remember(path: path, mtime: mtime, size: size, present: present)
+        return present
     }
 
     /// Order matters for a restart mid-write: the record is saved first, before either domain
@@ -99,6 +120,29 @@ struct CFChromePolicyWriter: ChromePolicyWriter {
     }
 
     // MARK: Pieces
+
+    /// One parse per distinct (path, mtime, size) of the user's plist; see `userCopyPresent`.
+    private final class UserPlistCache {
+        private let lock = NSLock()
+        private var key: (path: String, mtime: Date, size: Int)?
+        private var present = false
+
+        func lookup(path: String, mtime: Date, size: Int) -> Bool? {
+            lock.lock(); defer { lock.unlock() }
+            guard let key, key.path == path, key.mtime == mtime, key.size == size else { return nil }
+            return present
+        }
+        func remember(path: String, mtime: Date, size: Int, present: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            key = (path, mtime, size)
+            self.present = present
+        }
+        func forget() {
+            lock.lock(); defer { lock.unlock() }
+            key = nil
+        }
+    }
+    private static let userPlist = UserPlistCache()
 
     private func saveRecord(_ patterns: [String]) -> Bool {
         guard let data = try? JSONEncoder().encode(Record(patterns: patterns, writtenAt: Date())) else { return false }
