@@ -54,12 +54,18 @@ final class RecordingChromePolicyWriter: ChromePolicyWriter {
     var applied: [[String]] = []
     var clears = 0
     var failWith: String?
+    /// With `failWith`: the key was set before the failure (the record was not), as a writer
+    /// that died between the two would leave it.
+    var failLeavesKey = false
     var chromeInstalled = true
 
     func recordedPatterns() -> [String]? { record }
     func keyIsPresent() -> Bool { present != nil }
     func apply(patterns: [String]) -> String? {
-        if let failWith { return failWith }
+        if let failWith {
+            if failLeavesKey { present = patterns }
+            return failWith
+        }
         applied.append(patterns)
         present = patterns
         record = patterns

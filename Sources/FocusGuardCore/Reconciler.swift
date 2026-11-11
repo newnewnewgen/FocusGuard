@@ -56,6 +56,10 @@ public final class Reconciler {
     /// What this process (or, via the record, a previous one) last wrote to Chrome. nil: the
     /// key is not ours. Change detection keys on this, as the hosts region keys on file contents.
     private var chromeLastWritten: [String]?
+    /// `apply` has been called in this process and no `clear` has succeeded since. While true a
+    /// key with no record is a write of ours that failed part-way, not someone else's: the
+    /// foreign-key rule is skipped so the write is retried instead of refused forever.
+    private var chromeAttempted = false
     private var chromeRecordRead = false
     private var chromeForeignLogged = false
     private var chromeFailing = false
@@ -183,11 +187,12 @@ public final class Reconciler {
             guard chromeLastWritten != nil else { return "off" }
             if let reason = chrome.clear() { return chromeFailure(reason) }
             chromeLastWritten = nil
+            chromeAttempted = false
             chromeRecovered()
             log.info("chrome policy removed")
             return "off"
         }
-        if chromeLastWritten == nil, chrome.keyIsPresent() {
+        if chromeLastWritten == nil, !chromeAttempted, chrome.keyIsPresent() {
             if !chromeForeignLogged {
                 chromeForeignLogged = true
                 log.error("Chrome URLBlocklist is already set by someone else; leaving it alone")
@@ -195,6 +200,7 @@ public final class Reconciler {
             return "not applied (URLBlocklist already set by someone else)"
         }
         if chromeLastWritten != wanted {
+            chromeAttempted = true
             if let reason = chrome.apply(patterns: wanted) { return chromeFailure(reason) }
             chromeLastWritten = wanted
             chromeRecovered()

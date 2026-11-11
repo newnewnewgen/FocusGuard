@@ -141,6 +141,22 @@ final class ReconcilerChromeTests: XCTestCase {
         XCTAssertTrue(log.infos.contains { $0.contains("chrome policy writes recovered") })
     }
 
+    func testAFailedWriteThatSetTheKeyIsNotMistakenForAForeignKey() {
+        chrome.failWith = "record unwritable"
+        chrome.failLeavesKey = true
+        let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
+        XCTAssertEqual(r.chrome, "error: record unwritable")
+        XCTAssertTrue(chrome.keyIsPresent())
+        XCTAssertNil(chrome.recordedPatterns())
+        let r1 = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 2), monotonic: 102))
+        XCTAssertEqual(r1.chrome, "error: record unwritable", "still ours to retry, not someone else's")
+        chrome.failWith = nil
+        let r2 = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0, 4), monotonic: 104))
+        XCTAssertEqual(r2.chrome, "applied (3 patterns)")
+        XCTAssertEqual(chrome.applied, [all])
+        XCTAssertTrue(log.errors.filter { $0.contains("already set by someone else") }.isEmpty)
+    }
+
     func testChromeNotFoundIsOnlyASuffix() {
         chrome.chromeInstalled = false
         let r = sut.tick(live: cfg, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
