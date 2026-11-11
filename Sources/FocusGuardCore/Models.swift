@@ -116,7 +116,8 @@ public enum ChromeURLPattern {
                                  "file://", "http://", "https://"]
     public static let maxLength = 2048
 
-    /// The trimmed pattern, or nil when `raw` cannot be one.
+    /// The trimmed pattern with its scheme lowercased, or nil when `raw` cannot be one. The
+    /// part after the scheme is kept as typed: Chrome does its own matching.
     public static func normalize(_ raw: String) -> String? {
         let p = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !p.isEmpty, p.count <= maxLength,
@@ -125,15 +126,16 @@ public enum ChromeURLPattern {
               }) else { return nil }
         let lower = p.lowercased()
         if let scheme = schemes.first(where: { lower.hasPrefix($0) }) {
-            return p.count > scheme.count ? p : nil
+            return p.count > scheme.count ? scheme + p.dropFirst(scheme.count) : nil
         }
         return isBareHostPattern(p) ? p : nil
     }
 
     public static func isValid(_ pattern: String) -> Bool { normalize(pattern) == pattern }
 
-    /// `*`, `example.com`, `.exact.host.com`, optionally followed by `:port` and `/path` — the
-    /// shapes Chrome accepts without a scheme. `*` is allowed only as the whole pattern.
+    /// `*`, `example.com`, `.exact.host.com`, optionally followed by `:port` (1–5 digits) and
+    /// `/path` — the shapes Chrome accepts without a scheme. `*` is allowed only as the whole
+    /// pattern.
     static func isBareHostPattern(_ p: String) -> Bool {
         if p == "*" { return true }
         var rest = Substring(p)
@@ -142,6 +144,11 @@ public enum ChromeURLPattern {
         guard let first = host.first, first.isLetter || first.isNumber,
               host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == ".") }),
               !host.contains("..") else { return false }
+        rest = rest.dropFirst(host.count)
+        if rest.hasPrefix(":") {
+            let port = rest.dropFirst().prefix { $0 != "/" }
+            guard (1...5).contains(port.count), port.allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
+        }
         return true
     }
 }

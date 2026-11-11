@@ -9,9 +9,25 @@ final class ChromeURLModelTests: XCTestCase {
 
     func testEverySchemeIsAccepted() {
         for p in ["chrome://extensions/*", "chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg/*",
-                  "chrome-untrusted://x", "devtools://devtools/*", "file:///Users", "http://a.b", "https://a.b/c?d=e",
-                  "CHROME://flags"] {
+                  "chrome-untrusted://x", "devtools://devtools/*", "file:///Users", "http://a.b", "https://a.b/c?d=e"] {
             XCTAssertTrue(ChromeURLPattern.isValid(p), p)
+        }
+    }
+
+    func testSchemeIsLowercasedAndTheRestKept() {
+        XCTAssertEqual(ChromeURLPattern.normalize("CHROME://flags"), "chrome://flags")
+        XCTAssertEqual(ChromeURLPattern.normalize("Chrome-Extension://ABC/Path"), "chrome-extension://ABC/Path")
+        XCTAssertEqual(ChromeURLPattern.normalize("HTTPS://Example.com/A?B=C"), "https://Example.com/A?B=C")
+        XCTAssertFalse(ChromeURLPattern.isValid("CHROME://flags"), "not normal form")
+    }
+
+    func testBareHostPortMustBeOneToFiveDigits() {
+        for p in ["example.com:1", "example.com:65535", "example.com:8080/path", ".exact.com:443"] {
+            XCTAssertTrue(ChromeURLPattern.isValid(p), p)
+        }
+        for p in ["example.com:", "example.com:abc", "example.com:123456", "example.com:80x", "example.com:/path",
+                  "example.com:8080:1"] {
+            XCTAssertNil(ChromeURLPattern.normalize(p), "\u{201C}\(p)\u{201D} should be rejected")
         }
     }
 
