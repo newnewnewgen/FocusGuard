@@ -1,5 +1,5 @@
 #!/bin/bash
-# Live acceptance for Chrome pages (chrome pages spec §8). Needs the installed 0.6.0 daemon, no
+# Live acceptance for Chrome pages (chrome pages spec §8). Needs the installed 0.6.1 daemon, no
 # password, Google Chrome running, and you at the keyboard: the script can read the policy
 # preference but cannot see what Chrome shows, so it asks. Puts the two News Feed Eradicator
 # patterns in a window active now and checks the preference follows the window in both domains
@@ -27,7 +27,7 @@ user_absent() { ! defaults read com.google.Chrome URLBlocklist >/dev/null 2>&1; 
 user_domain() { defaults read com.google.Chrome URLBlocklist 2>/dev/null | tr -d '\n ' || echo absent; }
 
 [ -f "$STATUS" ] || { echo "the daemon is not installed (no $STATUS)"; exit 1; }
-[ "$(field version)" = 0.6.0 ] || { echo "installed daemon is $(field version), not 0.6.0: update it from the app's Status tab first"; exit 1; }
+[ "$(field version)" = 0.6.1 ] || { echo "installed daemon is $(field version), not 0.6.1: update it from the app's Status tab first"; exit 1; }
 # Every write below is a proposal the daemon may refuse: under an Impossible window of your own
 # config it would be held, and nothing here would be exercised.
 source=$(field source)
@@ -76,17 +76,17 @@ write() {  # $1 chromeURLs json, $2 mode, $3 step name (sentinel domain), $4 sta
 }
 adopted() { wait_for "grep -q \"^0.0.0.0 $1.focusguard-test.invalid\" /etc/hosts" 35; }
 released() { wait_for "! grep -q \"$1.focusguard-test.invalid\" /etc/hosts" 35; }
-BOTH='["chrome-extension://'"$EXT"'/*","chrome://extensions/*"]'
-ONE='["chrome-extension://'"$EXT"'/*"]'
+BOTH='["chrome-extension://'"$EXT"'","chrome://extensions"]'
+ONE='["chrome-extension://'"$EXT"'"]'
 
 echo "--- two patterns, Basic, window $start-$end"
 write "$BOTH" basic both "$start" "$end"
 check "daemon adopted the test config within a tick" 'adopted both'
 # Both domains are written in the same tick as the hosts region (spec §3); the user-domain
 # mirror is one short-lived `defaults import`, so allow a few seconds.
-check "user domain (the copy Chrome watches) lists chrome://extensions/* within 5 s" 'wait_for "user_has chrome://extensions/\\*" 5'
+check "user domain (the copy Chrome watches) lists chrome://extensions within 5 s" 'wait_for "user_has chrome://extensions" 5'
 check "and the extension pattern" 'user_has "chrome-extension://$EXT/"'
-check "system domain (the durable copy) lists both" 'sys_has "chrome://extensions/*" && sys_has "chrome-extension://$EXT/"'
+check "system domain (the durable copy) lists both" 'sys_has "chrome://extensions" && sys_has "chrome-extension://$EXT/"'
 check "status says applied (2 patterns" 'field chrome | grep -q "^applied (2 patterns"'
 check "ownership record written and names you" '[ -f "$RECORD" ] && [ "$(record_field name)" = "$(id -un)" ] && [ "$(record_field uid)" = "$(id -u)" ]'
 echo "    status chrome: $(field chrome)"
@@ -102,7 +102,7 @@ echo "--- deleting the user copy: re-asserted next tick"
 # No check that the copy is gone right after: the daemon may re-assert it within milliseconds
 # if its tick lands just then, and either outcome is correct. The re-assert is what is judged.
 defaults delete com.google.Chrome URLBlocklist 2>/dev/null
-check "system copy untouched by that" 'sys_has "chrome://extensions/*"'
+check "system copy untouched by that" 'sys_has "chrome://extensions"'
 check "user copy re-asserted within 35 s" 'wait_for "user_has chrome://extensions/\\*" 35'
 check "with both patterns" 'user_has "chrome-extension://$EXT/"'
 check "status still applied (2 patterns" 'field chrome | grep -q "^applied (2 patterns"'
@@ -125,12 +125,12 @@ impossible_step=1
 write "$BOTH" impossible impossible "$start" "$end"
 check "daemon adopted the Impossible window within a tick" 'adopted impossible'
 check "both patterns back in the user domain within 5 s" 'wait_for "user_has chrome://extensions/\\*" 5 && user_has "chrome-extension://$EXT/"'
-check "and in the system domain" 'sys_has "chrome://extensions/*"'
+check "and in the system domain" 'sys_has "chrome://extensions"'
 write "$ONE" impossible removed "$start" "$end"
 # No apps in the test config, so the daemon ticks every 30 s (+2 s leeway).
 check "removing a pattern is held" 'wait_for "[ \"\$(field source)\" = held ]" 35'
-check "chrome://extensions/* still in the user domain" 'user_has "chrome://extensions/*"'
-check "and in the system domain" 'sys_has "chrome://extensions/*"'
+check "chrome://extensions still in the user domain" 'user_has "chrome://extensions"'
+check "and in the system domain" 'sys_has "chrome://extensions"'
 check "status still applied (2 patterns" 'field chrome | grep -q "^applied (2 patterns"'
 
 echo "--- restore"

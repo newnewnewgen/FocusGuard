@@ -70,7 +70,7 @@ final class ChromeExtensionsTests: XCTestCase {
     }
 
     func testPatternsForAnExtension() {
-        XCTAssertEqual(ChromeExtensions.patterns(forExtensionID: a), ["chrome-extension://\(a)/*", "chrome://extensions/*"])
+        XCTAssertEqual(ChromeExtensions.patterns(forExtensionID: a), ["chrome-extension://\(a)", "chrome://extensions"])
         XCTAssertTrue(ChromeExtensions.isExtensionID("fjcldmjmjhkklehbacihaiopjklihlgg"))
         XCTAssertFalse(ChromeExtensions.isExtensionID("fjcldmjmjhkklehbacihaiopjklihlgq"), "q is outside a–p")
         XCTAssertTrue(ChromeExtensions.versionLess("1.6.0_0", "1.11_0"))

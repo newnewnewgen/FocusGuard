@@ -3,13 +3,30 @@ import XCTest
 
 final class ChromeURLModelTests: XCTestCase {
     func testNormalizeTrimsAndKeepsCase() {
-        XCTAssertEqual(ChromeURLPattern.normalize("  chrome://Extensions/* \n"), "chrome://Extensions/*")
+        XCTAssertEqual(ChromeURLPattern.normalize("  chrome://Extensions \n"), "chrome://Extensions")
         XCTAssertEqual(ChromeURLPattern.normalize("Example.com"), "Example.com", "kept verbatim; Chrome does its own matching")
     }
 
+    /// Chrome matches the path as a literal prefix; `*` is not a wildcard there. 0.6.0 wrote
+    /// `host/*`, which matched nothing (the live bug of 2026-11-12), so the form is stripped on
+    /// normalize, stays valid in a stored config, and is stripped again on enforcement.
+    func testTrailingPathWildcardIsStripped() {
+        XCTAssertEqual(ChromeURLPattern.normalize("chrome://extensions"), "chrome://extensions")
+        XCTAssertEqual(ChromeURLPattern.normalize("chrome-extension://abc/*"), "chrome-extension://abc")
+        XCTAssertEqual(ChromeURLPattern.normalize("chrome://settings/privacy/*"), "chrome://settings/privacy")
+        XCTAssertEqual(ChromeURLPattern.normalize("example.com/*"), "example.com")
+        XCTAssertEqual(ChromeURLPattern.normalize("example.com:8080/*"), "example.com:8080")
+        XCTAssertEqual(ChromeURLPattern.normalize("https://*"), "https://*", "every host of a scheme has no path")
+        XCTAssertEqual(ChromeURLPattern.normalize("*"), "*")
+        XCTAssertTrue(ChromeURLPattern.isValid("chrome://extensions"), "a 0.6.0 config stays readable")
+        let config = Config(blockLists: [BlockList(name: "l", chromeURLs: ["chrome://extensions"])])
+        XCTAssertNoThrow(try config.validate())
+        XCTAssertEqual(config.items(ofLists: config.blockLists.map(\.id)).chromeURLs, ["chrome://extensions"])
+    }
+
     func testEverySchemeIsAccepted() {
-        for p in ["chrome://extensions/*", "chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg/*",
-                  "chrome-untrusted://x", "devtools://devtools/*", "file:///Users", "http://a.b", "https://a.b/c?d=e"] {
+        for p in ["chrome://extensions", "chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg",
+                  "chrome-untrusted://x", "devtools://devtools", "file:///Users", "http://a.b", "https://a.b/c?d=e"] {
             XCTAssertTrue(ChromeURLPattern.isValid(p), p)
         }
     }
@@ -18,7 +35,7 @@ final class ChromeURLModelTests: XCTestCase {
         XCTAssertEqual(ChromeURLPattern.normalize("CHROME://flags"), "chrome://flags")
         XCTAssertEqual(ChromeURLPattern.normalize("Chrome-Extension://ABC/Path"), "chrome-extension://ABC/Path")
         XCTAssertEqual(ChromeURLPattern.normalize("HTTPS://Example.com/A?B=C"), "https://Example.com/A?B=C")
-        XCTAssertFalse(ChromeURLPattern.isValid("CHROME://flags"), "not normal form")
+        XCTAssertTrue(ChromeURLPattern.isValid("CHROME://flags"), "normalizable, so valid in a stored config")
     }
 
     func testBareHostPortMustBeOneToFiveDigits() {
@@ -55,12 +72,12 @@ final class ChromeURLModelTests: XCTestCase {
     }
 
     func testRoundTrip() throws {
-        let config = Config(blockLists: [BlockList(name: "l", chromeURLs: ["chrome://extensions/*", "example.com"])])
+        let config = Config(blockLists: [BlockList(name: "l", chromeURLs: ["chrome://extensions", "example.com"])])
         XCTAssertEqual(try Config.decodeJSON(try config.encodeJSON()), config)
     }
 
     func testInvalidPatternDoesNotDecode() throws {
-        let config = Config(blockLists: [BlockList(name: "l", chromeURLs: ["chrome://extensions/*", "has space"])])
+        let config = Config(blockLists: [BlockList(name: "l", chromeURLs: ["chrome://extensions", "has space"])])
         XCTAssertThrowsError(try Config.decodeJSON(try config.encodeJSON())) { error in
             XCTAssertEqual(error as? Config.ValidationError, .invalidChromeURL("has space"))
         }
@@ -76,13 +93,13 @@ final class ChromeURLModelTests: XCTestCase {
 
     func testBulkInputChromeURLs() {
         let text = """
-        chrome://extensions/*, chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg/*
+        chrome://extensions, chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg
         # comment
         example.com bad pattern *.nope.com
-        chrome://extensions/*
+        chrome://extensions
         """
         let r = BulkInput.chromeURLs(from: text)
-        XCTAssertEqual(r.accepted, ["chrome://extensions/*", "chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg/*", "example.com", "bad", "pattern"])
+        XCTAssertEqual(r.accepted, ["chrome://extensions", "chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg", "example.com", "bad", "pattern"])
         XCTAssertEqual(r.rejected, ["*.nope.com"])
         XCTAssertEqual(BulkInput.chromeURLs(from: " \n"), BulkInput.ChromeURLs(accepted: [], rejected: []))
     }

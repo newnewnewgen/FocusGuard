@@ -3,15 +3,15 @@ import XCTest
 
 final class ReconcilerChromeTests: XCTestCase {
     let base = "127.0.0.1 localhost\n"
-    let ext = "chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg/*"
-    let page = "chrome://extensions/*"
+    let ext = "chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg"
+    let page = "chrome://extensions"
     lazy var a = BlockList(name: "a", chromeURLs: [page, ext])
-    lazy var b = BlockList(name: "b", chromeURLs: [ext, "chrome://settings/*"])
+    lazy var b = BlockList(name: "b", chromeURLs: [ext, "chrome://settings"])
     lazy var cfg = Config(blockLists: [a, b], schedules: [
         ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!, blockListIDs: [a.id, b.id])])
     /// Sorted union: what the writer must receive. "-" sorts before ":", so the extension
     /// pattern comes first.
-    lazy var all = [ext, "chrome://extensions/*", "chrome://settings/*"]
+    lazy var all = [ext, "chrome://extensions", "chrome://settings"]
 
     var cal: Calendar = {
         var c = Calendar(identifier: .gregorian)

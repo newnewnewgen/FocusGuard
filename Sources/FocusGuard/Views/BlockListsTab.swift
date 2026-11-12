@@ -175,7 +175,7 @@ struct BlockListDetail: View {
                         removeButton { commit { $0.update(list: list.id) { $0.chromeURLs.removeAll { $0 == pattern } } } }
                     }
                 }
-                AddRow("chrome-extension://\u{2026} or chrome://extensions/*", text: $newChromeURL, onSubmit: addChromeURL) {
+                AddRow("chrome-extension://\u{2026} or chrome://extensions", text: $newChromeURL, onSubmit: addChromeURL) {
                 } accessory: {
                     Button("Add extension\u{2026}") { showAddExtension = true }
                     Button("Add many\u{2026}") { bulkKind = .chromeURLs }
@@ -317,7 +317,7 @@ struct BlockListDetail: View {
         let typed = newChromeURL.trimmingCharacters(in: .whitespaces)
         guard !typed.isEmpty else { return }
         guard let pattern = ChromeURLPattern.normalize(typed) else {
-            chromeHint = "\u{201C}\(typed)\u{201D} is not a Chrome URL pattern. Use a full address like chrome://extensions/* or chrome-extension://<id>/*, or a site like example.com \u{2014} no spaces, at most \(ChromeURLPattern.maxLength) characters."
+            chromeHint = "\u{201C}\(typed)\u{201D} is not a Chrome URL pattern. Use an address like chrome://extensions or chrome-extension://<id>, or a site like example.com \u{2014} no spaces, at most \(ChromeURLPattern.maxLength) characters."
             return
         }
         chromeHint = nil

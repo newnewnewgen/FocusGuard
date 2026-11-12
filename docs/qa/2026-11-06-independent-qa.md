@@ -223,7 +223,19 @@ Still untested: `utun` capture actually carrying DNS (a VPN with its own resolve
 127.0.0.1 (documented as a gap); reboot.
 
 
-## Live acceptance of Chrome pages (pending — daemon 0.6.0)
+## Live acceptance of Chrome pages (pending — daemon 0.6.1)
+
+**2026-11-12, found in use before the script ran:** Newgen added the two Add-extension patterns
+to his own list under an active Basic window. Daemon side correct end to end — `status.json`
+`applied (2 patterns)` 13 s after the edit, both preference domains held the key, the record
+named uid 501 — and `chrome://policy` listed `URLBlocklist`, yet a fresh tab to
+`chrome://extensions` loaded. Cause: 0.6.0 wrote `chrome://extensions/*` and
+`chrome-extension://<id>/*`, and Chrome's filter (`components/url_matcher/url_util.cc`,
+`FilterToComponents`) takes the path as a literal prefix with no wildcard, so `/*` matched
+nothing; the 2026-11-11 probe passed only because it used the exact options-page URL. 0.6.1
+strips a trailing `/*` in `ChromeURLPattern.normalize` (the enforcement set already normalizes,
+so the stored 0.6.0 config is fixed without editing it) and Add extension… writes host-only
+patterns. Needs the 0.6.1 daemon; the Chrome-side result is still to be recorded below.
 
 To be filled in after the user updates the daemon from the Status tab and runs
 `scripts/verify-chrome.sh` with Chrome open. Record here: `status.json` `chrome` values seen;

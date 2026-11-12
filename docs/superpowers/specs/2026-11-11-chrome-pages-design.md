@@ -173,13 +173,13 @@ is diagnosable from status alone.
 
 - Block Lists → each list gets a **Chrome pages** section: rows showing the pattern
   (monospaced), remove button gated like domains; an `AddRow` with placeholder
-  "chrome-extension://… or chrome://extensions/*", validation message on a bad pattern; **Add
+  "chrome-extension://… or chrome://extensions", validation message on a bad pattern; **Add
   many…** reusing `BulkAddSheet` with a new `.chromeURLs` kind (one pattern per line, comma or
   space separated; no hosts-file handling).
 - **Add extension…** button: a sheet listing installed Chrome extensions by name, from
   `~/Library/Application Support/Google/Chrome/*/Extensions/<id>/<version>/manifest.json`
   (name from `manifest.json`, or `__MSG_…__` resolved from `_locales/en/messages.json`, else the
-  id). Choosing one adds two patterns: `chrome-extension://<id>/*` and `chrome://extensions/*`.
+  id). Choosing one adds two patterns: `chrome-extension://<id>` and `chrome://extensions`.
   The second is explained in the sheet: "also blocks the page where the extension could be
   disabled". Each is skipped if already present.
 - Footer text: "Blocks pages inside Chrome itself. Chrome shows them as blocked by an

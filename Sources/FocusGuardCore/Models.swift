@@ -116,8 +116,14 @@ public enum ChromeURLPattern {
                                  "file://", "http://", "https://"]
     public static let maxLength = 2048
 
-    /// The trimmed pattern with its scheme lowercased, or nil when `raw` cannot be one. The
-    /// part after the scheme is kept as typed: Chrome does its own matching.
+    /// The trimmed pattern with its scheme lowercased and a trailing `/*` removed, or nil when
+    /// `raw` cannot be one. The rest is kept as typed: Chrome does its own matching.
+    ///
+    /// Chrome's filter format matches the path as a literal prefix and `*` is not a wildcard in
+    /// it (components/url_matcher/url_util.cc, `FilterToComponents`), so `chrome://extensions/*`
+    /// would only match a path that begins with "/*" — nothing. `chrome://extensions`, with no
+    /// path, matches every page of that host, which is what anyone typing `/*` meant. The
+    /// `scheme://*` form (every host of a scheme) has no path and is left alone.
     public static func normalize(_ raw: String) -> String? {
         let p = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !p.isEmpty, p.count <= maxLength,
@@ -126,12 +132,21 @@ public enum ChromeURLPattern {
               }) else { return nil }
         let lower = p.lowercased()
         if let scheme = schemes.first(where: { lower.hasPrefix($0) }) {
-            return p.count > scheme.count ? scheme + p.dropFirst(scheme.count) : nil
+            let body = stripPathWildcard(String(p.dropFirst(scheme.count)))
+            return body.isEmpty ? nil : scheme + body
         }
-        return isBareHostPattern(p) ? p : nil
+        let bare = stripPathWildcard(p)
+        return isBareHostPattern(bare) ? bare : nil
     }
 
-    public static func isValid(_ pattern: String) -> Bool { normalize(pattern) == pattern }
+    /// `host/path/*` → `host/path`; `host/*` → `host`. Applied once: `host/*/*` keeps one.
+    static func stripPathWildcard(_ s: String) -> String {
+        s.hasSuffix("/*") && s.count > 2 ? String(s.dropLast(2)) : s
+    }
+
+    /// Normalizable, not necessarily in normal form: a config written before the `/*` strip
+    /// (0.6.0 wrote `chrome://extensions/*`) must stay readable; `ActiveSet` normalizes on use.
+    public static func isValid(_ pattern: String) -> Bool { normalize(pattern) != nil }
 
     /// `*`, `example.com`, `.exact.host.com`, optionally followed by `:port` (1–5 digits) and
     /// `/path` — the shapes Chrome accepts without a scheme. `*` is allowed only as the whole

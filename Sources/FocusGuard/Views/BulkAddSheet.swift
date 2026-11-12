@@ -70,7 +70,7 @@ struct BulkAddSheet: View {
         switch kind {
         case .sites: return "One per line, or paste a list \u{2014} commas, spaces, URLs and hosts-file lines all work."
         case .keywords: return "One per line or separated by spaces/commas."
-        case .chromeURLs: return "One pattern per line, or separated by spaces or commas, e.g. chrome://extensions/* or chrome-extension://<id>/*. No hosts-file handling."
+        case .chromeURLs: return "One pattern per line, or separated by spaces or commas, e.g. chrome://extensions or chrome-extension://<id>. No hosts-file handling."
         }
     }
 

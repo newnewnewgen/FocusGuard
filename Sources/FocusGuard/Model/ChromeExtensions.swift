@@ -18,7 +18,7 @@ enum ChromeExtensions {
 
     /// The extension's own pages, and the page where it could be disabled.
     static func patterns(forExtensionID id: String) -> [String] {
-        ["chrome-extension://\(id)/*", "chrome://extensions/*"]
+        ["chrome-extension://\(id)", "chrome://extensions"]
     }
 
     static func installed() -> [ChromeExtension] { installed(under: chromeRoot) }
