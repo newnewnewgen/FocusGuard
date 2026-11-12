@@ -235,7 +235,12 @@ named uid 501 — and `chrome://policy` listed `URLBlocklist`, yet a fresh tab t
 nothing; the 2026-11-11 probe passed only because it used the exact options-page URL. 0.6.1
 strips a trailing `/*` in `ChromeURLPattern.normalize` (the enforcement set already normalizes,
 so the stored 0.6.0 config is fixed without editing it) and Add extension… writes host-only
-patterns. Needs the 0.6.1 daemon; the Chrome-side result is still to be recorded below.
+patterns. **Confirmed 2026-11-12 ~08:50:** after the Setup sheet's Update… installed the 0.6.1
+daemon (`status.json` `version 0.6.1`, `applied (2 patterns)`, pid 42018), both domains read
+`chrome-extension://fjcldmjmjhkklehbacihaiopjklihlgg` and `chrome://extensions` with no path,
+and Newgen reported a fresh tab to `chrome://extensions` blocked. The stored config still holds
+the `/*` form; the strip happened at enforcement, as designed. The scripted run below (window
+end, re-assert, Impossible hold) is still owed, in the 20:00–22:00 gap.
 
 To be filled in after the user updates the daemon from the Status tab and runs
 `scripts/verify-chrome.sh` with Chrome open. Record here: `status.json` `chrome` values seen;
