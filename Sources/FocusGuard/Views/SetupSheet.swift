@@ -1,11 +1,11 @@
 import FocusGuardCore
 import SwiftUI
 
-/// The checklist that was the Status tab's "Protection" section (UI polish spec §3). Presented
-/// over the settings window whenever `SetupNeed.shouldPresent` says protection is unhealthy and
-/// the user has not clicked "Not now" on this exact state — at launch and each time the app
-/// becomes active — and on demand from Status → "Setup…", which is how the login and Dock
-/// toggles stay reachable once everything is green.
+/// The three things FocusGuard needs to work: the background blocker, opening at login, and a
+/// way to find the app. Presented over the settings window whenever `SetupNeed.shouldPresent`
+/// says the blocker is unhealthy and the user has not clicked "Not now" on this exact state —
+/// at launch and each time the app becomes active — and on demand from Status → "Setup…".
+/// Keyword and Chrome problems are not setup; the Status tab reports them.
 struct SetupSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(DockFallback.self) private var dock
@@ -13,18 +13,11 @@ struct SetupSheet: View {
 
     private var inst: Installer { model.installer }
     private var protectionHealthy: Bool { !inst.working && SetupNeed.evaluate(inst.setupFlags) == nil }
-    private var keywordWatch: String { model.keywordWatch ?? "unknown (daemon status not available)" }
-    private var keywordsHealthy: Bool { keywordWatch.hasPrefix("watching") }
-    private var chromePages: String { model.chromePages ?? "unknown (daemon status not available)" }
-    private var chromeHealthy: Bool { chromePages.hasPrefix("applied") }
     /// Reachable: the menu-bar icon is on screen, or the Dock icon stands in for it.
     private var dockHealthy: Bool { !dock.menuBarIconHidden || dock.showsInDock }
 
-    /// Every step that is shown is green.
-    private var allGreen: Bool {
-        protectionHealthy && inst.opensAtLogin && dockHealthy
-            && (!model.hasKeywordRules || keywordsHealthy) && (!model.hasChromeURLs || chromeHealthy)
-    }
+    /// Every step is green.
+    private var allGreen: Bool { protectionHealthy && inst.opensAtLogin && dockHealthy }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -34,35 +27,17 @@ struct SetupSheet: View {
                 if let err = inst.lastError { Text(err).foregroundStyle(.red).font(.callout) }
                 Divider()
                 row(done: inst.opensAtLogin, "Open FocusGuard at login",
-                    detail: "So the app is there to close blocked apps the moment they launch and to show what is active.") {
-                    Toggle("Open FocusGuard at login", isOn: Binding(get: { inst.opensAtLogin }, set: { inst.setOpensAtLogin($0) }))
-                        .toggleStyle(.switch).labelsHidden()
-                }
-                if model.hasKeywordRules {
-                    Divider()
-                    row(done: keywordsHealthy, "Keyword matching: \(keywordWatch)",
-                        detail: keywordsHealthy ? "Sites whose names match your keywords are learned from the Mac's lookups and blocked." :
-                                "Keyword rules are inert until the daemon can watch lookups; sites and apps listed by name still work.")
-                }
-                if model.hasChromeURLs {
-                    Divider()
-                    row(done: chromeHealthy, "Chrome pages: \(chromePages)",
-                        detail: chromeHealthy ? "Chrome's URLBlocklist policy holds the patterns of every active window; Chrome shows those pages as blocked by an administrator." :
-                                chromePages.hasPrefix("not applied") ? "Something else has set Chrome's URLBlocklist. FocusGuard never overwrites it. To let FocusGuard manage it: sudo defaults delete /Library/Preferences/com.google.Chrome URLBlocklist" :
-                                chromePages.hasPrefix("error: ") ? "The daemon could not write Chrome's policy: \(chromePages.dropFirst("error: ".count)). It retries every tick." :
-                                "Chrome patterns are written to Chrome's policy when a window that has them starts.")
+                    detail: "So blocking is set up every time you start your Mac.") {
+                    AppToggles.login
                 }
                 Divider()
-                row(done: dockHealthy, dock.menuBarIconHidden ? "Menu-bar icon hidden by macOS" : "Menu-bar icon showing",
+                row(done: dockHealthy, dock.menuBarIconHidden ? "Menu bar icon is hidden" : "Menu bar icon is showing",
                     detail: dock.menuBarIconHidden
-                        ? "The menu bar is full, so FocusGuard shows in the Dock instead. You can always open this window from Spotlight too."
-                        : "FocusGuard lives in the menu bar (shield icon). If macOS hides that icon when the menu bar is full, it shows in the Dock automatically.") {
-                    Toggle("Show in Dock", isOn: Binding(get: { dock.showsInDock }, set: { dock.setShowsInDock($0) }))
-                        .toggleStyle(.switch).controlSize(.small)
+                        ? "Your menu bar is full. Show FocusGuard in the Dock instead."
+                        : "Look for the shield icon. You can also show FocusGuard in the Dock.") {
+                    AppToggles.dock
                 }
             }
-            Text("The background daemon blocks sites and apps whether or not this app is open. The app is where you edit lists and schedules; while it is open, blocked apps close instantly rather than within two seconds.")
-                .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 // The exit while protection is unhealthy (a cancelled password prompt, a failed
@@ -73,10 +48,10 @@ struct SetupSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 560)
+        .frame(width: 480)
         .onAppear { dock.check() }
-        // Closes itself 1.5 s after the last shown step turns green — only on a transition while
-        // it is open, so a sheet opened from "Setup…" in a healthy state stays for the toggles.
+        // Closes itself 1.5 s after the last step turns green — only on a transition while it is
+        // open, so a sheet opened from "Setup…" in a healthy state stays put.
         .onChange(of: allGreen) { _, green in
             closeTask?.cancel()
             guard green else { return }
@@ -96,26 +71,25 @@ struct SetupSheet: View {
             row(done: false, "Waiting for your password…")
         } else if inst.legacyDaemonRunning {
             row(done: false, SetupNeed.Reason.legacyDaemon.title,
-                detail: "This version keeps the daemon in a system folder other programs cannot change. One password prompt; your settings are kept.") {
+                detail: "Moves the blocker somewhere other programs can't change it. Your lists and schedule are kept.") {
                 Button("Reinstall…") { inst.install() }
             }
         } else if !inst.daemonInstalled {
             row(done: false, SetupNeed.Reason.notInstalled.title,
-                detail: "Installs the root daemon that does the blocking. macOS asks for your password once.") {
-                Button("Install protection…") { inst.install() }
+                detail: "The blocker keeps working even when this app is closed. Asks for your password once.") {
+                Button("Install…") { inst.install() }
             }
         } else if inst.needsUpdate {
             row(done: false, SetupNeed.Reason.needsUpdate.title,
-                detail: "This app is newer than the installed daemon\(inst.status.map { " (\($0.version))" } ?? ""). Blocking continues meanwhile.") {
+                detail: "This version of the app comes with a newer blocker. Asks for your password once.") {
                 Button("Update…") { inst.install() }
             }
         } else if inst.daemonRunning {
-            row(done: true, "Background daemon running",
-                detail: [inst.status.map { "version \($0.version)" }, inst.daemonProcess.map { "pid \($0.pid)" }]
-                    .compactMap { $0 }.joined(separator: " · "))
+            row(done: true, "Background blocker running",
+                detail: "Sites and apps are blocked on schedule, even when this app is closed.")
         } else {
             row(done: false, SetupNeed.Reason.notRunning.title,
-                detail: "launchd normally restarts it within seconds. Reinstalling re-registers it.") {
+                detail: "Reinstalling starts it again.") {
                 Button("Reinstall…") { inst.install() }
             }
         }
@@ -137,4 +111,28 @@ struct SetupSheet: View {
             action()
         }
     }
+}
+
+/// The two app switches, shared by the Setup sheet and the Status tab so they read and behave
+/// the same in both places.
+enum AppToggles {
+    struct Login: View {
+        @Environment(AppModel.self) private var model
+        var body: some View {
+            let inst = model.installer
+            Toggle("Open FocusGuard at login", isOn: Binding(get: { inst.opensAtLogin }, set: { inst.setOpensAtLogin($0) }))
+                .toggleStyle(.switch).labelsHidden()
+        }
+    }
+
+    struct Dock: View {
+        @Environment(DockFallback.self) private var dock
+        var body: some View {
+            Toggle("Show in Dock", isOn: Binding(get: { dock.showsInDock }, set: { dock.setShowsInDock($0) }))
+                .toggleStyle(.switch).labelsHidden()
+        }
+    }
+
+    static var login: Login { Login() }
+    static var dock: Dock { Dock() }
 }

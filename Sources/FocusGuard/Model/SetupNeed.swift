@@ -16,10 +16,10 @@ enum SetupNeed {
 
         var title: String {
             switch self {
-            case .legacyDaemon: return "Protection needs reinstalling"
-            case .notInstalled: return "Background daemon not installed"
-            case .needsUpdate: return "Background daemon needs updating"
-            case .notRunning: return "Background daemon installed but not running"
+            case .legacyDaemon: return "Blocker needs reinstalling"
+            case .notInstalled: return "Background blocker not installed"
+            case .needsUpdate: return "Background blocker needs updating"
+            case .notRunning: return "Background blocker not running"
             }
         }
     }

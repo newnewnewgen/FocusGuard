@@ -30,7 +30,7 @@ and the sheet only reopens on its own when something changes or the app is relau
 signed; requires macOS 15.
 
 After rebuilding, `ditto` the new bundle over the old one and reopen the app. If the daemon
-changed, the Setup sheet opens by itself with **Background daemon needs updating** and an
+changed, the Setup sheet opens by itself with **Background blocker needs updating** and an
 **Update…** button (one password prompt), and Status shows one orange row until you do.
 Blocking continues with the old daemon meanwhile.
 

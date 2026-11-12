@@ -9,7 +9,8 @@ struct StatusTab: View {
         Form {
             // A broken state is never silent: one orange row pointing at the Setup sheet (spec §3).
             if let first = problems.first { problemSection(first, more: problems.count - 1) }
-            if model.daemonIsHolding || model.clockTampered || model.zoneHeldBack != nil || model.canRestoreConfig { noticeSection }
+            if model.daemonIsHolding || model.clockTampered || model.zoneHeldBack != nil || model.canRestoreConfig
+                || keywordProblem != nil || chromeProblem != nil { noticeSection }
 
             Section("Now") {
                 if model.isBlocking {
@@ -27,10 +28,19 @@ struct StatusTab: View {
                 if let err = model.saveError { Text(err).foregroundStyle(.red).font(.callout) }
             }
 
-            Section {
+            Section("App") {
+                Toggle(isOn: Binding(get: { model.installer.opensAtLogin }, set: { model.installer.setOpensAtLogin($0) })) {
+                    Text("Open FocusGuard at login")
+                    Text("So blocking is set up every time you start your Mac.")
+                }
+                Toggle(isOn: Binding(get: { dock.showsInDock }, set: { dock.setShowsInDock($0) })) {
+                    Text("Show in Dock")
+                    Text(dock.menuBarIconHidden
+                         ? "Your menu bar is full, so the shield icon is hidden. The Dock is the other way to find FocusGuard."
+                         : "FocusGuard lives in the menu bar (shield icon). The Dock is a second way to find it.")
+                }
                 HStack {
                     Spacer()
-                    // The login and Dock toggles live on the sheet; this is how they stay reachable.
                     Button("Setup…") { model.setupSheetPresented = true }.buttonStyle(.link)
                 }
             }
@@ -39,23 +49,31 @@ struct StatusTab: View {
         .onAppear { dock.check() }
     }
 
-    /// Everything the Setup sheet would show as not green, in the sheet's order. Only a keyword
-    /// capture *error* counts ("waiting for network" is not a problem), and a Chrome policy that
-    /// errored or was not applied; the Dock row counts only when the icon is hidden and the Dock
-    /// stand-in is off, which is the one unreachable state.
+    /// What the Setup sheet would show as not green, in the sheet's order: the blocker, and the
+    /// Dock row only when the icon is hidden and the Dock stand-in is off, which is the one
+    /// unreachable state. Keyword and Chrome trouble is not setup; it is a notice below.
     private var problems: [String] {
         var out: [String] = []
         if let reason = SetupNeed.evaluate(model.installer.setupFlags) { out.append(reason.title) }
-        if model.hasKeywordRules, let watch = model.keywordWatch, watch.hasPrefix("error:") {
-            out.append("Keyword matching: \(watch)")
-        }
-        if model.hasChromeURLs, let chrome = model.chromePages, chrome.hasPrefix("error:") || chrome.hasPrefix("not applied") {
-            out.append("Chrome pages: \(chrome)")
-        }
         if dock.menuBarIconHidden, !dock.showsInDock {
-            out.append("The menu-bar icon is hidden by macOS and the Dock icon is off")
+            out.append("FocusGuard is hard to find: the menu bar icon is hidden and the Dock icon is off")
         }
         return out
+    }
+
+    /// Only a keyword capture *error* counts ("waiting for network" is not a problem), and a
+    /// Chrome policy that errored or was not applied.
+    private var keywordProblem: String? {
+        guard model.hasKeywordRules, let watch = model.keywordWatch, watch.hasPrefix("error:") else { return nil }
+        return String(watch.dropFirst("error: ".count))
+    }
+    private var chromeProblem: String? {
+        guard model.hasChromeURLs, let chrome = model.chromePages else { return nil }
+        if chrome.hasPrefix("not applied") {
+            return "Something else is already managing which pages Chrome blocks, so FocusGuard is leaving it alone."
+        }
+        if chrome.hasPrefix("error: ") { return String(chrome.dropFirst("error: ".count)) }
+        return nil
     }
 
     private func problemSection(_ title: String, more: Int) -> some View {
@@ -106,6 +124,25 @@ struct StatusTab: View {
                         Text("Time zone change on hold")
                         Text("Schedules are still read in \(zone) until the Impossible window ends.")
                             .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let keywordProblem {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Keyword rules are not working")
+                        Text("Sites and apps you listed by name are still blocked. \(keywordProblem)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let chromeProblem {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Chrome pages are not being blocked")
+                        Text(chromeProblem).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
