@@ -240,11 +240,17 @@ someone else" path; a restart mid-window (record-based ownership); nobody logged
 `error: defaults import (user domain) exited 1: …` and the 30 s spawn backoff; uninstall with a
 key held.
 
-## UI polish — visual checks (pending)
+## UI polish — visual checks (approved 2026-11-11, build 00b3e90)
 
 Nothing in the 2026-11-11 UI polish batch is testable beyond `ListOrderTests` and
-`SetupNeedTests`; the rest is checked by eye in the running app after `scripts/build-app.sh`
-and `ditto` to /Applications. To record here, with the build's commit:
+`SetupNeedTests`; the rest was checked by eye in the running app (0.6.0, built from `ui-polish`
+at 00b3e90 with `chrome-pages` merged in, `ditto`'d to /Applications). Newgen walked the list
+below and approved it ("Looks good"). One thing exercised for real in passing: the Setup sheet
+opened at launch over the 0.5.0 daemon with "Background daemon needs updating"; its **Update…**
+installed 0.6.0 (`status.json` then read `version 0.6.0`, `chrome off`, `source live`, DNS
+watch on en0 + utun0–5), so the setup path replaces the old Status-tab button end to end.
+Not exercised by eye: the no-lists disabled ghost row, the stopped-daemon orange row, and the
+Impossible-window variants (no Impossible window was active). The checklist that was walked:
 
 - **Lists:** drag a list above another in the Block Lists sidebar; the "Default" caption moves
   with the first row; the move is never challenged, even during an active Impossible window;
