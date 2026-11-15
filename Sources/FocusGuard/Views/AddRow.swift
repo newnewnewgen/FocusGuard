@@ -33,7 +33,7 @@ struct AddRow<Trailing: View, Accessory: View>: View {
         HStack {
             Image(systemName: "plus.circle.fill")
                 .foregroundStyle(focused || hasText ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            TextField(placeholder, text: $text)
+            TextField("", text: $text, prompt: Text(placeholder))
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit(onSubmit)

@@ -16,9 +16,11 @@ enum ChromeExtensions {
     static let chromeRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Google/Chrome")
 
-    /// The extension's own pages, and the page where it could be disabled.
+    /// The extension's own pages. `chrome://extensions` (where it could be turned off) is a
+    /// separate choice the user types; adding it for every extension put a second, puzzling
+    /// row in the list.
     static func patterns(forExtensionID id: String) -> [String] {
-        ["chrome-extension://\(id)", "chrome://extensions"]
+        ["chrome-extension://\(id)"]
     }
 
     static func installed() -> [ChromeExtension] { installed(under: chromeRoot) }

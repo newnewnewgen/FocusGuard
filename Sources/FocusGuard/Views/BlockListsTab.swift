@@ -175,7 +175,7 @@ struct BlockListDetail: View {
                         removeButton { commit { $0.update(list: list.id) { $0.chromeURLs.removeAll { $0 == pattern } } } }
                     }
                 }
-                AddRow("chrome-extension://\u{2026} or chrome://extensions", text: $newChromeURL, onSubmit: addChromeURL) {
+                AddRow("Add a page, e.g. chrome://extensions", text: $newChromeURL, onSubmit: addChromeURL) {
                 } accessory: {
                     Button("Add extension\u{2026}") { showAddExtension = true }
                     Button("Add many\u{2026}") { bulkKind = .chromeURLs }

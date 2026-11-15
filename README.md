@@ -113,7 +113,7 @@ Site rules cannot reach pages inside Chrome that never cause a lookup: an extens
 (`chrome-extension://<id>/…`) and Chrome's internal pages (`chrome://extensions`,
 `chrome://settings`). A block list's **Chrome pages** are patterns for Chrome's own
 `URLBlocklist` policy — `chrome://extensions`, `chrome-extension://<id>`, or a site name — and
-**Add extension…** lists what is installed and adds both patterns for one. A pattern with no path
+**Add extension…** lists what is installed and adds the pattern for one. A pattern with no path
 covers every page of that host; Chrome matches a path as a literal prefix with no wildcards, so a
 trailing `/*` (which would match nothing) is dropped when you add one. While a window with
 Chrome patterns is active the daemon writes them to Chrome's policy preference; Chrome shows

@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Pick installed Chrome extensions; each adds `chrome-extension://<id>` and
-/// `chrome://extensions` — the page where the extension could be disabled (spec §6).
+/// Pick installed Chrome extensions; each adds `chrome-extension://<id>`, the extension's own pages (spec §6).
 struct AddExtensionSheet: View {
     /// Patterns the list already holds.
     let alreadyAdded: Set<String>
@@ -47,7 +46,7 @@ struct AddExtensionSheet: View {
                 }
             }
             Divider()
-            Text("Each extension adds two patterns: its own pages (chrome-extension://<id>) and chrome://extensions, the page where it could be turned off.")
+            Text("Blocks the extension's own pages (chrome-extension://<id>). To also stop it being turned off, add chrome://extensions to the list.")
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding([.horizontal, .top])
             HStack {
