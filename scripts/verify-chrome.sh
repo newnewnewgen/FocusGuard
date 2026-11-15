@@ -50,7 +50,7 @@ user_absent || { echo "URLBlocklist is already set in your own Chrome preference
 
 day=$(LC_ALL=C date +%a | tr 'A-Z' 'a-z')
 # The live window: active now. The over window: already ended, for the "window end" step.
-start=$(LC_ALL=C date -v-1M +%H:%M); end=$(LC_ALL=C date -v+6M +%H:%M)
+start=$(LC_ALL=C date -v-1M +%H:%M); end=$(LC_ALL=C date -v+10M +%H:%M)
 ostart=$(LC_ALL=C date -v-2M +%H:%M); oend=$start
 # A window is start < end on one day; across midnight it would never activate (or never end).
 [[ "$ostart" < "$oend" && "$start" < "$end" ]] || { echo "too close to midnight (windows $ostart-$oend / $start-$end would wrap), rerun in 7 minutes"; exit 1; }
@@ -85,16 +85,27 @@ check "daemon adopted the test config within a tick" 'adopted both'
 # Both domains are written in the same tick as the hosts region (spec §3); the user-domain
 # mirror is one short-lived `defaults import`, so allow a few seconds.
 check "user domain (the copy Chrome watches) lists chrome://extensions within 5 s" 'wait_for "user_has chrome://extensions" 5'
-check "and the extension pattern" 'user_has "chrome-extension://$EXT/"'
-check "system domain (the durable copy) lists both" 'sys_has "chrome://extensions" && sys_has "chrome-extension://$EXT/"'
+check "and the extension pattern" 'user_has "chrome-extension://$EXT"'
+check "system domain (the durable copy) lists both" 'sys_has "chrome://extensions" && sys_has "chrome-extension://$EXT"'
 check "status says applied (2 patterns" 'field chrome | grep -q "^applied (2 patterns"'
 check "ownership record written and names you" '[ -f "$RECORD" ] && [ "$(record_field name)" = "$(id -un)" ] && [ "$(record_field uid)" = "$(id -u)" ]'
 echo "    status chrome: $(field chrome)"
 echo "    user domain now: $(user_domain)"
+# An answer that arrives after the window has ended is about a key the daemon has already
+# (correctly) removed: the 2026-11-12 run answered its first question 15 minutes late and
+# reported five FAILs that were all this. Stop rather than judge; the exit trap restores.
+still_live() {
+    [[ "$(LC_ALL=C date +%H:%M)" < "$end" ]] && return 0
+    echo "The test window ended at $end before you answered, so the key is already gone and the live checks cannot be judged. Rerun and answer within a few minutes."
+    fail=1; exit 1
+}
+echo "    Answer the next two questions before $end, while the test window is active."
 echo "    In Chrome, open a NEW tab at chrome://extensions  (do not click Reload policies anywhere)."
 check "Chrome blocks chrome://extensions" 'ask "Does Chrome show it as blocked by your administrator (ERR_BLOCKED_BY_ADMINISTRATOR)?"'
+still_live
 echo "    Now open chrome-extension://$EXT/entrypoints/options-page/index.html in a new tab."
 check "Chrome blocks the extension's options page" 'ask "Blocked too?"'
+still_live
 
 echo "--- deleting the user copy: re-asserted next tick"
 # Your own domain needs no password. The daemon notices the copy is gone (userCopyPresent) and
@@ -103,8 +114,8 @@ echo "--- deleting the user copy: re-asserted next tick"
 # if its tick lands just then, and either outcome is correct. The re-assert is what is judged.
 defaults delete com.google.Chrome URLBlocklist 2>/dev/null
 check "system copy untouched by that" 'sys_has "chrome://extensions"'
-check "user copy re-asserted within 35 s" 'wait_for "user_has chrome://extensions/\\*" 35'
-check "with both patterns" 'user_has "chrome-extension://$EXT/"'
+check "user copy re-asserted within 35 s" 'wait_for "user_has chrome://extensions" 35'
+check "with both patterns" 'user_has "chrome-extension://$EXT"'
 check "status still applied (2 patterns" 'field chrome | grep -q "^applied (2 patterns"'
 
 echo "--- window end: a window already over ($ostart-$oend) removes the key"
@@ -124,7 +135,7 @@ echo "--- Impossible holds a pattern"
 impossible_step=1
 write "$BOTH" impossible impossible "$start" "$end"
 check "daemon adopted the Impossible window within a tick" 'adopted impossible'
-check "both patterns back in the user domain within 5 s" 'wait_for "user_has chrome://extensions/\\*" 5 && user_has "chrome-extension://$EXT/"'
+check "both patterns back in the user domain within 5 s" 'wait_for "user_has chrome://extensions" 5 && user_has "chrome-extension://$EXT"'
 check "and in the system domain" 'sys_has "chrome://extensions"'
 write "$ONE" impossible removed "$start" "$end"
 # No apps in the test config, so the daemon ticks every 30 s (+2 s leeway).
