@@ -55,8 +55,8 @@ shortening it, lowering its mode.
 
 | Mode | What it takes to weaken an active window | Enforced by |
 |------|------------------------------------------|-------------|
-| **Basic** | Nothing; applies immediately. | — |
-| **Friction** (default) | Type a randomly generated sentence, drawn captcha-style, in a field that refuses pasted text. | The app |
+| **Basic** (default) | Nothing; applies immediately. | — |
+| **Friction** | Type 40 random letters (no words, no spaces), drawn captcha-style, in a field that refuses pasted text. | The app |
 | **Impossible** | Cannot be done until the window ends. | The app **and the daemon** |
 
 Adding sites, apps or windows, and extending an end time, are always allowed. The strictest

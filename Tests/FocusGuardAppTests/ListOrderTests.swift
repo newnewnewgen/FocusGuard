@@ -12,11 +12,16 @@ final class ListOrderTests: XCTestCase {
         XCTAssertEqual(w.days, [.mon, .tue, .wed, .thu, .fri])
         XCTAssertEqual(w.start, TimeOfDay("09:00")!)
         XCTAssertEqual(w.end, TimeOfDay("12:00")!)
-        XCTAssertTrue(w.enabled)
     }
 
     func testNewWindowWithNoListsAttachesNothing() {
         XCTAssertEqual(Config.empty.newWindow().blockListIDs, [])
+    }
+
+    func testNewWindowIsOffAndBasic() {
+        let w = Config.empty.newWindow()
+        XCTAssertFalse(w.enabled, "a new window blocks nothing until switched on")
+        XCTAssertEqual(w.unlockMode, .basic)
     }
 
     func testMovingListsChangesTheirOrderAndNothingElse() {

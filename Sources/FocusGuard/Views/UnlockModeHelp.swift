@@ -8,8 +8,8 @@ import SwiftUI
 struct UnlockModeHelp: View {
     @State private var page: UnlockMode
 
-    /// Ten words from `Challenge.words`, so it looks like a sentence the real sheet would draw.
-    static let sampleSentence = "quiet river seven green bottle garden morning silver window travel"
+    /// 40 letters from `Challenge.alphabet`, so it looks like what the real sheet would draw.
+    static let sampleSentence = "qvrisekgtbnopdmahzuyjcwfxrqtinskbmgoehpd"
     private static let sampleUntil = TimeOfDay("20:00")!
 
     init(mode: UnlockMode) {
@@ -26,7 +26,7 @@ struct UnlockModeHelp: View {
             case .basic:
                 Text("Changes apply at once, even while the window is active.")
             case .friction:
-                Text("While the window is active, weakening it (removing a site, ending it early, turning it off) first asks you to type a sentence. Paste and autocorrect do not work.")
+                Text("While the window is active, weakening it (removing a site, ending it early, turning it off) first asks you to type 40 random letters, copied from a drawing. Paste and autocorrect do not work.")
                 ChallengeSheet(challenge: PendingChallenge(sentence: Self.sampleSentence) {}, dismiss: {}, isPreview: true)
                     .background(RoundedRectangle(cornerRadius: 10).fill(.background).shadow(color: .black.opacity(0.18), radius: 6, y: 2))
             case .impossible:

@@ -1,45 +1,28 @@
 import Foundation
 
-/// The Friction unlock: a random sentence the user must type word for word (spec §10.4).
+/// The Friction unlock: a run of random letters the user must type exactly (spec §10.4).
+///
+/// Letters, not words, and no spaces: a sentence of real words can be read in one glance and
+/// typed from memory in chunks, which made Friction a speed bump of a few seconds. A meaningless
+/// run has to be copied letter by letter from the drawing, with nothing to predict the next
+/// character from, and no word gaps to pace it. 40 letters is about 25–40 s of careful typing.
 public enum Challenge {
-    public static let defaultWordCount = 10
+    public static let defaultLength = 40
 
-    /// Common, easy-to-type words (3–8 letters, lowercase). Spellings that differ between US and
-    /// Canadian/UK English are left out so the sentence has exactly one correct typing.
-    public static let words: [String] = """
-    about above across after again against along among animal answer around arrive basket beach \
-    before begin behind below beside better between beyond bottle branch bread bridge bright broken \
-    brother butter button camera candle carpet castle cattle chance change cheese circle \
-    class clock cloud coffee corner cotton count country cousin cover crowd dance danger \
-    daughter decide desert dinner doctor dollar double dragon dream dress drink early earth eight \
-    either empty enemy engine enough evening every expect family famous farmer father field fight \
-    figure finger finish flower follow forest forget forward friend front fruit future garden gather \
-    gentle giant glass golden grass green ground guard guess hammer happen heavy hidden \
-    history honey horse hotel hundred hunger hurry island jacket journey jungle kitchen ladder \
-    language large laugh leader learn leather letter level light listen little lonely machine magic \
-    manner marble market master matter meadow member memory metal middle minute mirror modern \
-    moment money monkey morning mother mountain music narrow nation nature needle never night \
-    noise north notice number object ocean office orange order other paint palace paper parent \
-    pattern pencil people pepper person picture pillow planet plant pocket point police potato \
-    powder power pretty prince prison pupil puzzle quarter question quick quiet rabbit rather reach \
-    reason record remain repeat rescue return ribbon river rocket round saddle salad school second \
-    secret seven shadow shelter shout signal silent silver simple single sister sleep smile smoke \
-    soldier south speak spider spring square stone story stream street strong sudden sugar summer \
-    supper table teacher temple thick thirty thread throat thunder ticket timber tomato tongue \
-    tower travel treasure trouble turtle twelve twenty uncle under until valley velvet village \
-    voice wagon watch water weather wheel whisper window winter wonder wooden yellow young
-    """.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+    /// Lowercase ASCII letters without `l`, which the drawn, mixed-typeface glyphs can make look
+    /// like `i` or `1`; every remaining letter is distinct at a glance in every face used.
+    public static let alphabet: [Character] = Array("abcdefghijkmnopqrstuvwxyz")
 
-    /// `wordCount` (> 0) words drawn with replacement from `words`, joined by single spaces.
-    public static func sentence(wordCount: Int = defaultWordCount, using rng: inout some RandomNumberGenerator) -> String {
-        precondition(wordCount > 0, "a challenge sentence needs at least one word")
-        return (0..<wordCount).map { _ in words.randomElement(using: &rng)! }.joined(separator: " ")
+    /// `length` (> 0) letters drawn with replacement from `alphabet`, with no separators.
+    public static func sentence(length: Int = defaultLength, using rng: inout some RandomNumberGenerator) -> String {
+        precondition(length > 0, "a challenge needs at least one letter")
+        return String((0..<length).map { _ in alphabet.randomElement(using: &rng)! })
     }
 
     /// Convenience with the system generator.
-    public static func sentence(wordCount: Int = defaultWordCount) -> String {
+    public static func sentence(length: Int = defaultLength) -> String {
         var rng = SystemRandomNumberGenerator()
-        return sentence(wordCount: wordCount, using: &rng)
+        return sentence(length: length, using: &rng)
     }
 
     /// Exact match after trimming leading/trailing whitespace and newlines. Case and internal

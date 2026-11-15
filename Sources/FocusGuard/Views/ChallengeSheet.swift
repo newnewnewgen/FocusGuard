@@ -1,7 +1,7 @@
 import FocusGuardCore
 import SwiftUI
 
-/// Type-the-sentence gate. The sentence is drawn on a Canvas (not selectable, no text layer to
+/// Type-the-letters gate. The run of letters is drawn on a Canvas (not selectable, no text layer to
 /// copy) with per-glyph jitter, mixed typefaces, strike lines and speckle so a screenshot is hard
 /// to OCR. The field refuses any change that puts in more than one character at once, so paste
 /// and drag do nothing, with or without a selection to paste over.
@@ -31,8 +31,8 @@ struct ChallengeSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Type this sentence to continue").font(.headline)
-            Text("This window uses the Friction unlock mode. Copying, pasting and autocorrect will not work; spaces and lowercase must match.")
+            Text("Type these letters to continue").font(.headline)
+            Text("This window uses the Friction unlock mode. It is not a word: copy it letter by letter, all lowercase, no spaces. Pasting and autocorrect will not work.")
                 .font(.callout).foregroundStyle(.secondary)
             Text("VoiceOver users: set the window's unlock mode to Basic.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -122,25 +122,21 @@ struct CaptchaText: View {
         var glyphs: [CaptchaGlyph] = []
         var x = Self.inset, y: CGFloat = 26
         var lines = 1
-        let words = sentence.split(separator: " ").map(String.init)
-        for (wi, word) in words.enumerated() {
-            // Decide each glyph's face first and measure it, then wrap on the real width.
-            let faces = word.map { ch -> (String, Font.Design, Font.Weight, CGFloat) in
-                let design = Self.designs[Int(rng.next() % UInt64(Self.designs.count))]
-                let weight: Font.Weight = rng.next() % 2 == 0 ? .semibold : .regular
-                return (String(ch), design, weight, Self.measure(String(ch), design: design, weight: weight))
-            }
-            let wordWidth = faces.reduce(0) { $0 + $1.3 + 1.5 }
-            if x > Self.inset, x + wordWidth > width - Self.inset { x = Self.inset; y += Self.lineHeight; lines += 1 }
-            for (text, design, weight, w) in faces {
-                let angle = Angle.degrees(Double(rng.below(29)) - 14)
-                let dy = rng.below(9) - 4
-                let opacity = 0.75 + Double(rng.below(25)) / 100
-                glyphs.append(CaptchaGlyph(text: text, design: design, weight: weight,
-                                           x: x + w / 2, y: y + dy, angle: angle, opacity: opacity))
-                x += w + 1.5
-            }
-            if wi < words.count - 1 { x += 9 }
+        // One continuous run: no word gaps, wrapping wherever the next glyph would not fit, so
+        // there is nothing to chunk by. A space in the sentence (none in current challenges)
+        // still takes its own width.
+        for ch in sentence {
+            let design = Self.designs[Int(rng.next() % UInt64(Self.designs.count))]
+            let weight: Font.Weight = rng.next() % 2 == 0 ? .semibold : .regular
+            let text = String(ch)
+            let w = Self.measure(text, design: design, weight: weight)
+            if x > Self.inset, x + w > width - Self.inset { x = Self.inset; y += Self.lineHeight; lines += 1 }
+            let angle = Angle.degrees(Double(rng.below(29)) - 14)
+            let dy = rng.below(9) - 4
+            let opacity = 0.75 + Double(rng.below(25)) / 100
+            glyphs.append(CaptchaGlyph(text: text, design: design, weight: weight,
+                                       x: x + w / 2, y: y + dy, angle: angle, opacity: opacity))
+            x += w + 1.5
         }
         self.glyphs = glyphs
         self.lines = lines

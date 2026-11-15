@@ -14,32 +14,27 @@ struct SeededRNG: RandomNumberGenerator {
 }
 
 final class ChallengeTests: XCTestCase {
-    func testSentenceHasRequestedWordCountFromWordList() {
+    func testSentenceHasRequestedLengthFromAlphabetWithNoSpaces() {
         var rng = SeededRNG(state: 1)
-        let s = Challenge.sentence(wordCount: 10, using: &rng)
-        let words = s.split(separator: " ").map(String.init)
-        XCTAssertEqual(words.count, 10)
-        XCTAssertTrue(words.allSatisfy { Challenge.words.contains($0) }, s)
+        let s = Challenge.sentence(length: 40, using: &rng)
+        XCTAssertEqual(s.count, 40)
+        XCTAssertFalse(s.contains(" "), "no chunks to type from memory")
+        XCTAssertTrue(s.allSatisfy { Challenge.alphabet.contains($0) }, s)
+        XCTAssertEqual(Challenge.sentence().count, Challenge.defaultLength)
     }
 
     func testSentenceIsDeterministicForSeedAndVariesAcrossSeeds() {
         var a = SeededRNG(state: 7), b = SeededRNG(state: 7), c = SeededRNG(state: 8)
-        XCTAssertEqual(Challenge.sentence(wordCount: 8, using: &a), Challenge.sentence(wordCount: 8, using: &b))
+        XCTAssertEqual(Challenge.sentence(length: 8, using: &a), Challenge.sentence(length: 8, using: &b))
         var a2 = SeededRNG(state: 7)
-        XCTAssertNotEqual(Challenge.sentence(wordCount: 8, using: &a2), Challenge.sentence(wordCount: 8, using: &c))
+        XCTAssertNotEqual(Challenge.sentence(length: 8, using: &a2), Challenge.sentence(length: 8, using: &c))
     }
 
-    func testWordListIsLargeLowercaseAndUnique() {
-        XCTAssertGreaterThanOrEqual(Challenge.words.count, 200)
-        XCTAssertEqual(Set(Challenge.words).count, Challenge.words.count)
-        XCTAssertTrue(Challenge.words.allSatisfy { $0 == $0.lowercased() && $0.count >= 3 && $0.count <= 8 })
-    }
-
-    func testWordListAvoidsUSUKDivergentSpellings() {
-        let divergent: Set<String> = ["color", "colour", "center", "centre", "harbor", "harbour", "favor", "favour",
-                                      "flavor", "flavour", "gray", "grey", "honor", "honour", "labor", "labour",
-                                      "neighbor", "neighbour", "meter", "metre", "theater", "theatre"]
-        XCTAssertTrue(divergent.isDisjoint(with: Challenge.words), "\(divergent.intersection(Challenge.words))")
+    func testAlphabetIsLowercaseUniqueAndDropsTheAmbiguousL() {
+        XCTAssertEqual(Set(Challenge.alphabet).count, Challenge.alphabet.count)
+        XCTAssertTrue(Challenge.alphabet.allSatisfy { $0.isLowercase && $0.isASCII && $0.isLetter })
+        XCTAssertFalse(Challenge.alphabet.contains("l"))
+        XCTAssertEqual(Challenge.alphabet.count, 25)
     }
 
     func testMatchesIsExactExceptSurroundingWhitespace() {
