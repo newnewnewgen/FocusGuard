@@ -1,23 +1,18 @@
 import FocusGuardCore
 import SwiftUI
 
-/// The three things FocusGuard needs to work: the background blocker, opening at login, and a
-/// way to find the app. Presented over the settings window whenever `SetupNeed.shouldPresent`
-/// says the blocker is unhealthy and the user has not clicked "Not now" on this exact state —
-/// at launch and each time the app becomes active — and on demand from Status → "Setup…".
-/// Keyword and Chrome problems are not setup; the Status tab reports them.
+/// The one thing FocusGuard needs to work: the background blocker. Presented over the settings
+/// window whenever `SetupNeed.shouldPresent` says the blocker is unhealthy and the user has not
+/// clicked "Not now" on this exact state — at launch and each time the app becomes active — and
+/// on demand from Status → "Setup…". Login and Dock are app preferences (Status → App), and
+/// keyword and Chrome problems are notices there; neither is setup.
 struct SetupSheet: View {
     @Environment(AppModel.self) private var model
-    @Environment(DockFallback.self) private var dock
     @State private var closeTask: Task<Void, Never>?
 
     private var inst: Installer { model.installer }
     private var protectionHealthy: Bool { !inst.working && SetupNeed.evaluate(inst.setupFlags) == nil }
-    /// Reachable: the menu-bar icon is on screen, or the Dock icon stands in for it.
-    private var dockHealthy: Bool { !dock.menuBarIconHidden || dock.showsInDock }
-
-    /// Every step is green.
-    private var allGreen: Bool { protectionHealthy && inst.opensAtLogin && dockHealthy }
+    private var allGreen: Bool { protectionHealthy }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -25,18 +20,6 @@ struct SetupSheet: View {
             VStack(alignment: .leading, spacing: 10) {
                 daemonRow(inst)
                 if let err = inst.lastError { Text(err).foregroundStyle(.red).font(.callout) }
-                Divider()
-                row(done: inst.opensAtLogin, "Open FocusGuard at login",
-                    detail: "So blocking is set up every time you start your Mac.") {
-                    AppToggles.login
-                }
-                Divider()
-                row(done: dockHealthy, dock.menuBarIconHidden ? "Menu bar icon is hidden" : "Menu bar icon is showing",
-                    detail: dock.menuBarIconHidden
-                        ? "Your menu bar is full. Show FocusGuard in the Dock instead."
-                        : "Look for the shield icon. You can also show FocusGuard in the Dock.") {
-                    AppToggles.dock
-                }
             }
             HStack {
                 Spacer()
@@ -49,8 +32,7 @@ struct SetupSheet: View {
         }
         .padding(20)
         .frame(width: 480)
-        .onAppear { dock.check() }
-        // Closes itself 1.5 s after the last step turns green — only on a transition while it is
+        // Closes itself 1.5 s after the blocker turns green — only on a transition while it is
         // open, so a sheet opened from "Setup…" in a healthy state stays put.
         .onChange(of: allGreen) { _, green in
             closeTask?.cancel()
@@ -111,28 +93,4 @@ struct SetupSheet: View {
             action()
         }
     }
-}
-
-/// The two app switches, shared by the Setup sheet and the Status tab so they read and behave
-/// the same in both places.
-enum AppToggles {
-    struct Login: View {
-        @Environment(AppModel.self) private var model
-        var body: some View {
-            let inst = model.installer
-            Toggle("Open FocusGuard at login", isOn: Binding(get: { inst.opensAtLogin }, set: { inst.setOpensAtLogin($0) }))
-                .toggleStyle(.switch).labelsHidden()
-        }
-    }
-
-    struct Dock: View {
-        @Environment(DockFallback.self) private var dock
-        var body: some View {
-            Toggle("Show in Dock", isOn: Binding(get: { dock.showsInDock }, set: { dock.setShowsInDock($0) }))
-                .toggleStyle(.switch).labelsHidden()
-        }
-    }
-
-    static var login: Login { Login() }
-    static var dock: Dock { Dock() }
 }
