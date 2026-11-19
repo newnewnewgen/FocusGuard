@@ -69,6 +69,30 @@ final class ChromeExtensionsTests: XCTestCase {
         XCTAssertEqual(ChromeExtensions.installed(under: root.appendingPathComponent("missing")), [])
     }
 
+    func testIconIsTheLargestNamedFileInsideTheFolderOnly() throws {
+        try install(a, version: "1.0_0", manifest: ["name": "A", "icons": ["16": "s.png", "128": "big/l.png", "256": "missing.png"]])
+        let dir = root.appendingPathComponent("Default/Extensions/\(a)/1.0_0")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("big"), withIntermediateDirectories: true)
+        try Data([0]).write(to: dir.appendingPathComponent("s.png"))
+        try Data([0]).write(to: dir.appendingPathComponent("big/l.png"))
+        let found = ChromeExtensions.installed(under: root)
+        XCTAssertEqual(found.first?.iconURL?.lastPathComponent, "l.png", "256 is missing, so 128 wins over 16")
+
+        // A manifest is untrusted: a path out of the folder is ignored even when the file exists.
+        try install(b, version: "1.0_0", manifest: ["name": "B", "icons": ["128": "../../../../escape.png"]])
+        try Data([0]).write(to: root.appendingPathComponent("escape.png"))
+        XCTAssertNil(ChromeExtensions.installed(under: root).first { $0.id == b }?.iconURL)
+        try install(c, version: "1.0_0", manifest: ["name": "C"])
+        XCTAssertNil(ChromeExtensions.installed(under: root).first { $0.id == c }?.iconURL, "no icons key")
+    }
+
+    func testExtensionIDFromPattern() {
+        XCTAssertEqual(ChromeExtensions.extensionID(fromPattern: "chrome-extension://\(a)"), a)
+        XCTAssertNil(ChromeExtensions.extensionID(fromPattern: "chrome-extension://\(a)/options.html"), "a page, not the extension")
+        XCTAssertNil(ChromeExtensions.extensionID(fromPattern: "chrome://extensions"))
+        XCTAssertNil(ChromeExtensions.extensionID(fromPattern: "example.com"))
+    }
+
     func testPatternsForAnExtension() {
         XCTAssertEqual(ChromeExtensions.patterns(forExtensionID: a), ["chrome-extension://\(a)"])
         XCTAssertTrue(ChromeExtensions.isExtensionID("fjcldmjmjhkklehbacihaiopjklihlgg"))

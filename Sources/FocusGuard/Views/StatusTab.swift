@@ -4,6 +4,7 @@ import SwiftUI
 struct StatusTab: View {
     @Environment(AppModel.self) private var model
     @Environment(DockFallback.self) private var dock
+    @AppStorage(Beta.chromeExtensionsKey) private var chromeExtensionsBeta = false
 
     var body: some View {
         Form {
@@ -17,7 +18,7 @@ struct StatusTab: View {
                     LabeledContent("Active", value: model.activeWindowNames.joined(separator: ", "))
                     if let until = model.lockState.lockedUntil { LabeledContent("Until", value: until.string) }
                     LabeledContent("Blocking", value: "\(model.activeSet.domains.count) sites, \(model.activeSet.bundleIDs.count) apps"
-                                   + (model.activeSet.chromeURLs.isEmpty ? "" : ", \(model.activeSet.chromeURLs.count) Chrome pages"))
+                                   + (model.activeSet.chromeURLs.isEmpty || !chromeExtensionsBeta ? "" : ", \(model.activeSet.chromeURLs.count) Chrome extensions"))
                 } else {
                     LabeledContent("Active", value: "Nothing")
                 }
@@ -42,6 +43,13 @@ struct StatusTab: View {
                 HStack {
                     Spacer()
                     Button("Setup…") { model.setupSheetPresented = true }.buttonStyle(.link)
+                }
+            }
+
+            Section("Beta") {
+                Toggle(isOn: $chromeExtensionsBeta) {
+                    Text("Chrome extension blocking")
+                    Text("Adds a Chrome extensions section to each block list. Extensions already in a list stay blocked with this off.")
                 }
             }
         }
@@ -141,7 +149,7 @@ struct StatusTab: View {
                 HStack(alignment: .firstTextBaseline) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Chrome pages are not being blocked")
+                        Text("Chrome extensions are not being blocked")
                         Text(chromeProblem).font(.caption).foregroundStyle(.secondary)
                     }
                 }

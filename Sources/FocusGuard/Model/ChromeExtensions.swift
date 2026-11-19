@@ -6,6 +6,8 @@ struct ChromeExtension: Identifiable, Hashable {
     let name: String
     /// Profile folders it was found in ("Default", "Profile 1"), sorted.
     let profiles: [String]
+    /// The largest icon the manifest names, if the file exists.
+    let iconURL: URL?
 
     var patterns: [String] { ChromeExtensions.patterns(forExtensionID: id) }
 }
@@ -28,7 +30,7 @@ enum ChromeExtensions {
     static func installed(under root: URL) -> [ChromeExtension] {
         let fm = FileManager.default
         guard let profiles = try? fm.contentsOfDirectory(atPath: root.path) else { return [] }
-        var byID: [String: (name: String, profiles: [String])] = [:]
+        var byID: [String: (name: String, profiles: [String], icon: URL?)] = [:]
         for profile in profiles.sorted() {
             let extensions = root.appendingPathComponent(profile).appendingPathComponent("Extensions")
             guard let ids = try? fm.contentsOfDirectory(atPath: extensions.path) else { continue }
@@ -43,13 +45,13 @@ enum ChromeExtensions {
                 }).first else { continue }
                 let name = resolveName(manifest, in: versionDir) ?? id
                 if let seen = byID[id] {
-                    byID[id] = (seen.name, seen.profiles + [profile])
+                    byID[id] = (seen.name, seen.profiles + [profile], seen.icon)
                 } else {
-                    byID[id] = (name, [profile])
+                    byID[id] = (name, [profile], iconURL(manifest, in: versionDir))
                 }
             }
         }
-        return byID.map { ChromeExtension(id: $0.key, name: $0.value.name, profiles: $0.value.profiles) }
+        return byID.map { ChromeExtension(id: $0.key, name: $0.value.name, profiles: $0.value.profiles, iconURL: $0.value.icon) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
@@ -68,6 +70,34 @@ enum ChromeExtensions {
     static func readJSON(_ url: URL) -> [String: Any]? {
         guard let data = FileManager.default.contents(atPath: url.path) else { return nil }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// The largest entry of the manifest's `icons` ({"16": "a.png", "128": "b.png"}) that exists
+    /// on disk, resolved inside the extension's folder; nil when there is none.
+    static func iconURL(_ manifest: [String: Any], in dir: URL) -> URL? {
+        guard let icons = manifest["icons"] as? [String: String] else { return nil }
+        let std = dir.standardizedFileURL.path
+        for (_, rel) in icons.sorted(by: { (Int($0.key) ?? 0) > (Int($1.key) ?? 0) }) {
+            let path = rel.hasPrefix("/") ? String(rel.dropFirst()) : rel
+            let url = dir.appendingPathComponent(path).standardizedFileURL
+            // A manifest is untrusted input: never follow a path out of the extension folder.
+            guard url.path.hasPrefix(std + "/"), FileManager.default.fileExists(atPath: url.path) else { continue }
+            return url
+        }
+        return nil
+    }
+
+    /// Installed extensions keyed by id, for showing a pattern as the extension it names.
+    static func installedByID() -> [String: ChromeExtension] {
+        Dictionary(installed().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// The id when `pattern` is an extension's host-only pattern, else nil.
+    static func extensionID(fromPattern pattern: String) -> String? {
+        let prefix = "chrome-extension://"
+        guard pattern.hasPrefix(prefix) else { return nil }
+        let id = String(pattern.dropFirst(prefix.count))
+        return isExtensionID(id) ? id : nil
     }
 
     /// `name`, with `__MSG_key__` resolved from `_locales/<default_locale>/messages.json`, then

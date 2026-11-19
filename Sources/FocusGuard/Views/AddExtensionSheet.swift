@@ -28,12 +28,13 @@ struct AddExtensionSheet: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if extensions.isEmpty {
                 ContentUnavailableView("No Chrome extensions found", systemImage: "puzzlepiece.extension",
-                                       description: Text("Looked in ~/Library/Application Support/Google/Chrome/*/Extensions. You can still type a pattern in the list."))
+                                       description: Text("Looked in Chrome's profiles on this Mac."))
             } else if shown.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else {
                 List(shown, selection: $picked) { ext in
                     HStack {
+                        ExtensionIcon(url: ext.iconURL)
                         VStack(alignment: .leading) {
                             Text(ext.name)
                             Text(ext.id).font(.caption).foregroundStyle(.secondary)
@@ -46,9 +47,6 @@ struct AddExtensionSheet: View {
                 }
             }
             Divider()
-            Text("Blocks the extension's own pages (chrome-extension://<id>). To also stop it being turned off, add chrome://extensions to the list.")
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading).padding([.horizontal, .top])
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -68,5 +66,20 @@ struct AddExtensionSheet: View {
             extensions = found
             scanning = false
         }
+    }
+}
+
+/// The extension's own icon from its folder, or a generic puzzle piece.
+struct ExtensionIcon: View {
+    let url: URL?
+    var body: some View {
+        Group {
+            if let url, let img = NSImage(contentsOf: url) {
+                Image(nsImage: img).resizable().interpolation(.high)
+            } else {
+                Image(systemName: "puzzlepiece.extension").resizable().foregroundStyle(.secondary).padding(2)
+            }
+        }
+        .frame(width: 20, height: 20)
     }
 }

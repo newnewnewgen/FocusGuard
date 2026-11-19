@@ -111,9 +111,12 @@ as they already hide them from the hosts layer. VPNs that use `ipsec*` or `ppp*`
 
 Site rules cannot reach pages inside Chrome that never cause a lookup: an extension's own pages
 (`chrome-extension://<id>/…`) and Chrome's internal pages (`chrome://extensions`,
-`chrome://settings`). A block list's **Chrome pages** are patterns for Chrome's own
-`URLBlocklist` policy — `chrome://extensions`, `chrome-extension://<id>`, or a site name — and
-**Add extension…** lists what is installed and adds the pattern for one. A pattern with no path
+`chrome://settings`). A block list's **Chrome extensions** section (beta: switch it on
+under Status → App → Beta) holds patterns for Chrome's own `URLBlocklist` policy.
+**Add extension…** lists what is installed and adds `chrome-extension://<id>` for one, shown by
+its icon and name; **Also block the Extensions page** adds `chrome://extensions`, so the
+extension cannot be turned off. Any pattern `config.json` holds is shown and enforced,
+including ones typed by hand in an earlier version. A pattern with no path
 covers every page of that host; Chrome matches a path as a literal prefix with no wildcards, so a
 trailing `/*` (which would match nothing) is dropped when you add one. While a window with
 Chrome patterns is active the daemon writes them to Chrome's policy preference; Chrome shows

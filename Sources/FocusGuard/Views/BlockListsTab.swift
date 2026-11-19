@@ -74,15 +74,18 @@ struct BlockListDetail: View {
     @State private var newAllow = ""
     @State private var allowHint: String?
     @State private var showAddApp = false
-    @State private var newChromeURL = ""
-    @State private var chromeHint: String?
     @State private var showAddExtension = false
+    @State private var installedExtensions: [String: ChromeExtension] = [:]
+    @AppStorage(Beta.chromeExtensionsKey) private var chromeExtensionsBeta = false
     @State private var bulkKind: BulkAddSheet.Kind?
     @FocusState private var nameFocused: Bool
     /// Bumped on every refused edit; `.id(refused)` rebuilds the form from the saved config.
     @State private var refused = 0
 
     private var mode: UnlockMode? { model.mode(forList: list.id) }
+    static let extensionsPage = "chrome://extensions"
+    /// Chrome patterns shown as rows: everything except the Extensions page, which is the toggle.
+    private var extensionPatterns: [String] { unique(list.chromeURLs).filter { $0 != Self.extensionsPage } }
     private var removalsLocked: Bool { mode == .impossible }
 
     var body: some View {
@@ -93,7 +96,7 @@ struct BlockListDetail: View {
                         .focused($nameFocused)
                         .onSubmit(commitName)
                         .onChange(of: nameFocused) { _, focused in if !focused { commitName() } }
-                        .onChange(of: list.id) { _, _ in name = list.name; newDomain = ""; newChromeURL = "" }
+                        .onChange(of: list.id) { _, _ in name = list.name; newDomain = "" }
                         .onChange(of: list.name) { _, n in name = n }
                     ProtectionBadge(mode: mode, until: model.lockState.lockedUntil)
                 }
@@ -145,9 +148,8 @@ struct BlockListDetail: View {
                 }
                 if let hint = keywordHint { Text(hint).font(.caption).foregroundStyle(.red) }
             } header: {
-                Text("Keywords")
-            } footer: {
-                Text("Matches site names only (mangadex.org, not reddit.com/r/manga). Sites are learned as your Mac looks them up and blocked from then on. Whole word, starts with and ends with look at the parts of the name between dots and hyphens.")
+                SectionTitle(title: "Keywords",
+                             help: "Matches site names only: mangadex.org, not reddit.com/r/manga. A site is learned the first time your Mac looks it up and blocked from then on. Whole word, starts with and ends with look at the parts of the name between dots and hyphens.")
             }
 
             Section("Apps") {
@@ -166,25 +168,37 @@ struct BlockListDetail: View {
                 Button("Add app…") { showAddApp = true }
             }
 
-            Section {
-                ForEach(unique(list.chromeURLs), id: \.self) { pattern in
-                    HStack {
-                        Text(pattern).font(.system(.body, design: .monospaced))
-                            .lineLimit(1).truncationMode(.middle).help(pattern)
-                        Spacer()
-                        removeButton { commit { $0.update(list: list.id) { $0.chromeURLs.removeAll { $0 == pattern } } } }
+            if chromeExtensionsBeta {
+                Section {
+                    ForEach(extensionPatterns, id: \.self) { pattern in
+                        HStack {
+                            let ext = ChromeExtensions.extensionID(fromPattern: pattern).flatMap { installedExtensions[$0] }
+                            ExtensionIcon(url: ext?.iconURL)
+                            if let ext {
+                                Text(ext.name)
+                            } else {
+                                Text(pattern).font(.system(.body, design: .monospaced))
+                                    .lineLimit(1).truncationMode(.middle).help(pattern)
+                            }
+                            Spacer()
+                            removeButton { commit { $0.update(list: list.id) { $0.chromeURLs.removeAll { $0 == pattern } } } }
+                        }
                     }
-                }
-                AddRow("Add a page, e.g. chrome://extensions", text: $newChromeURL, onSubmit: addChromeURL) {
-                } accessory: {
                     Button("Add extension\u{2026}") { showAddExtension = true }
-                    Button("Add many\u{2026}") { bulkKind = .chromeURLs }
+                    Toggle(isOn: Binding(get: { list.chromeURLs.contains(Self.extensionsPage) }, set: { on in
+                        commit { $0.update(list: list.id) { l in
+                            if on { if !l.chromeURLs.contains(Self.extensionsPage) { l.chromeURLs.append(Self.extensionsPage) } }
+                            else { l.chromeURLs.removeAll { $0 == Self.extensionsPage } }
+                        } }
+                    })) {
+                        Text("Also block the Extensions page")
+                        Text("So a blocked extension cannot be turned off from chrome://extensions.")
+                    }
+                    .disabled(removalsLocked && list.chromeURLs.contains(Self.extensionsPage))
+                } header: {
+                    SectionTitle(title: "Chrome extensions",
+                                 help: "Chrome shows the extension's pages as blocked by an administrator. Other browsers are not affected. Beta: turn it off under Status → App.")
                 }
-                if let hint = chromeHint { Text(hint).font(.caption).foregroundStyle(.red) }
-            } header: {
-                Text("Chrome pages")
-            } footer: {
-                Text("Blocks pages inside Chrome itself. Chrome shows them as blocked by an administrator. Other browsers are not affected.")
             }
 
             Section {
@@ -200,14 +214,17 @@ struct BlockListDetail: View {
                 AddRow("Never block this site, e.g. mangalore.in", text: $newAllow, buttonTitle: "Allow", onSubmit: addAllow)
                 if let hint = allowHint { Text(hint).font(.caption).foregroundStyle(.red) }
             } header: {
-                Text("Always allow (all lists)")
-            } footer: {
-                Text("Keyword rules never block these sites or their subdomains. Sites you list by name are still blocked. Adding an entry while a keyword window is active counts as loosening it.")
+                SectionTitle(title: "Always allow (all lists)",
+                             help: "Keyword rules never block these sites or their subdomains. Sites you list by name are still blocked. Adding one while a keyword window is active counts as loosening it.")
             }
         }
         .formStyle(.grouped)
         .id(refused)
         .onAppear { name = list.name }
+        .task {
+            guard chromeExtensionsBeta, !list.chromeURLs.isEmpty else { return }
+            installedExtensions = await Task.detached(priority: .utility) { ChromeExtensions.installedByID() }.value
+        }
         .sheet(isPresented: $showAddApp) {
             AddAppSheet(alreadyAdded: Set(list.appBundleIDs)) { ids in
                 commit { $0.update(list: list.id) { l in
@@ -220,6 +237,7 @@ struct BlockListDetail: View {
                 commit { $0.update(list: list.id) { l in
                     for p in patterns where !l.chromeURLs.contains(p) { l.chromeURLs.append(p) }
                 } }
+                Task { installedExtensions = await Task.detached(priority: .utility) { ChromeExtensions.installedByID() }.value }
             }
         }
         .sheet(item: $bulkKind) { kind in
@@ -244,12 +262,7 @@ struct BlockListDetail: View {
                     } }
                 }
             case .chromeURLs:
-                BulkAddSheet(kind: .chromeURLs, listName: list.name, existing: Set(list.chromeURLs),
-                             totalInConfig: lists.reduce(0) { $0 + $1.chromeURLs.count }) { patterns, _ in
-                    commit { $0.update(list: list.id) { l in
-                        for p in patterns where !l.chromeURLs.contains(p) { l.chromeURLs.append(p) }
-                    } }
-                }
+                EmptyView()   // no bulk entry for Chrome extensions; the picker is the way in
             }
         }
     }
@@ -311,18 +324,6 @@ struct BlockListDetail: View {
         let rule = KeywordRule(text: text, match: newMatch)
         commit { $0.update(list: list.id) { l in if !l.keywords.contains(where: { $0.itemKey == rule.itemKey }) { l.keywords.append(rule) } } }
         newKeyword = ""
-    }
-
-    private func addChromeURL() {
-        let typed = newChromeURL.trimmingCharacters(in: .whitespaces)
-        guard !typed.isEmpty else { return }
-        guard let pattern = ChromeURLPattern.normalize(typed) else {
-            chromeHint = "\u{201C}\(typed)\u{201D} is not a Chrome URL pattern. Use an address like chrome://extensions or chrome-extension://<id>, or a site like example.com \u{2014} no spaces, at most \(ChromeURLPattern.maxLength) characters."
-            return
-        }
-        chromeHint = nil
-        commit { $0.update(list: list.id) { if !$0.chromeURLs.contains(pattern) { $0.chromeURLs.append(pattern) } } }
-        newChromeURL = ""
     }
 
     private func addAllow() {
