@@ -24,10 +24,10 @@ end=$(date -r "$end_epoch" +%H:%M)
 LIST=0B1C2D3E-0000-4000-8000-0000000000A1
 WIN=0B1C2D3E-0000-4000-8000-0000000000A2
 window() {  # $1 enabled, $2 lists json
-    printf '{"id":"%s","name":"Impossible test","days":["%s"],"start":"%s","end":"%s","blockListIDs":%s,"enabled":%s,"unlockMode":"impossible"}' "$WIN" "$day" "$start" "$end" "$2" "$1"
+    printf '{"id":"%s","name":"Impossible test","days":["%s"],"start":"%s","end":"%s","blockListIDs":%s,"enabled":%s}' "$WIN" "$day" "$start" "$end" "$2" "$1"
 }
 lists='[{"id":"'$LIST'","name":"Test","domains":["example.com"],"appBundleIDs":["com.apple.Chess"]}]'
-write() { printf '{"version":1,"blockLists":%s,"schedules":[%s]}\n' "$1" "$2" > "$CFG"; }
+write() { printf '{"version":1,"blockLists":%s,"schedules":[%s],"unlockMode":"impossible"}\n' "$1" "$2" > "$CFG"; }
 
 echo "--- Impossible window $day $start-$end (now $(date +%H:%M:%S))"
 write "$lists" "$(window true "[\"$LIST\"]")"

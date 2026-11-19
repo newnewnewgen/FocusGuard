@@ -6,14 +6,18 @@ import XCTest
 final class LockBypassTests: XCTestCase {
     let list = BlockList(name: "l", domains: ["x.com"], appBundleIDs: ["com.example.app"])
     func window(_ name: String, _ days: Set<Weekday>, _ start: String, _ end: String,
-                mode: UnlockMode = .impossible, lists: [UUID]? = nil, enabled: Bool = true, id: UUID = UUID()) -> ScheduleWindow {
+                lists: [UUID]? = nil, enabled: Bool = true, id: UUID = UUID()) -> ScheduleWindow {
         ScheduleWindow(id: id, name: name, days: days, start: TimeOfDay(start)!, end: TimeOfDay(end)!,
-                       blockListIDs: lists ?? [list.id], enabled: enabled, unlockMode: mode)
+                       blockListIDs: lists ?? [list.id], enabled: enabled)
+    }
+    /// Impossible unless said otherwise: these are the bypasses of an Impossible lock.
+    func cfg(_ windows: [ScheduleWindow], lists: [BlockList]? = nil, mode: UnlockMode = .impossible) -> Config {
+        Config(blockLists: lists ?? [list], schedules: windows, unlockMode: mode)
     }
     func at(_ day: Weekday, _ hhmm: String) -> LocalMoment {
         LocalMoment(weekday: day, minutesSinceMidnight: TimeOfDay(hhmm)!.minutesSinceMidnight)
     }
-    lazy var locked = Config(blockLists: [list], schedules: [window("a", [.mon], "09:00", "12:00")])
+    lazy var locked = cfg([window("a", [.mon], "09:00", "12:00")])
 
     // MARK: B1 — duplicate IDs
 
@@ -21,7 +25,7 @@ final class LockBypassTests: XCTestCase {
         // First copy protects nothing; the disabled second copy carries the lists. Keyed by ID,
         // the old check saw "window still active, items still there".
         let id = locked.schedules[0].id
-        let twins = Config(blockLists: [list], schedules: [
+        let twins = cfg([
             window("a", [.mon], "09:00", "12:00", lists: [], id: id),
             window("a", [.mon], "09:00", "12:00", enabled: false, id: id),
         ])
@@ -44,7 +48,7 @@ final class LockBypassTests: XCTestCase {
     // MARK: B2 — a missing file is a proposal to block nothing
 
     func testDeletingTheFileDoesNotDropAFollowingImpossibleWindow() {
-        let both = Config(blockLists: [list], schedules: [window("a", [.mon], "09:00", "12:00"), window("b", [.mon], "12:00", "17:00")])
+        let both = cfg([window("a", [.mon], "09:00", "12:00"), window("b", [.mon], "12:00", "17:00")])
         var r = ConfigResolver()
         _ = r.resolve(live: both, at: at(.mon, "10:00"), monotonic: 0)
         XCTAssertEqual(r.resolve(live: nil, at: at(.mon, "11:00"), monotonic: 3600).source, .lastGood)
@@ -78,8 +82,8 @@ final class LockBypassTests: XCTestCase {
     }
 
     func testTooManyWindowsOrItemsDoNotDecode() throws {
-        var manyWindows = Config(blockLists: [list], schedules: [])
-        for i in 0...Config.Limits.maxWindows { manyWindows.schedules.append(window("w\(i)", [.mon], "09:00", "10:00", mode: .basic)) }
+        var manyWindows = cfg([], mode: .basic)
+        for i in 0...Config.Limits.maxWindows { manyWindows.schedules.append(window("w\(i)", [.mon], "09:00", "10:00")) }
         XCTAssertThrowsError(try Config.decodeJSON(try manyWindows.encodeJSON()))
 
         var manyDomains = locked
@@ -89,7 +93,7 @@ final class LockBypassTests: XCTestCase {
 
     func testTheLargestAllowedConfigIsJudgedQuickly() throws {
         // Staggered windows over a full list: the shape that took minutes before the limits.
-        var big = Config(blockLists: [], schedules: [])
+        var big = cfg([], lists: [])
         let perList = Config.Limits.maxDomains / Config.Limits.maxLists
         for l in 0..<Config.Limits.maxLists {
             big.blockLists.append(BlockList(name: "l\(l)", domains: (0..<perList).map { "l\(l)d\($0).com" }, appBundleIDs: []))
@@ -97,11 +101,13 @@ final class LockBypassTests: XCTestCase {
         let all = big.blockLists.map(\.id)
         for w in 0..<Config.Limits.maxWindows {
             let start = String(format: "%02d:%02d", w / 2, w % 2 * 30)
-            big.schedules.append(window("w\(w)", Set(Weekday.allCases), start, "23:59", mode: w == 0 ? .impossible : .basic, lists: all))
+            big.schedules.append(window("w\(w)", Set(Weekday.allCases), start, "23:59", lists: all))
         }
         XCTAssertNoThrow(try Config.decodeJSON(try big.encodeJSON()), "this is within the limits")
+        // Every window ends a minute early: the cut is at the last minute of the stretch, so the
+        // judgement walks all of it.
         var shorter = big
-        shorter.schedules[0].end = TimeOfDay("23:58")!
+        for i in shorter.schedules.indices { shorter.schedules[i].end = TimeOfDay("23:58")! }
         let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
         XCTAssertEqual(shorter.weakens(from: big, at: at(.mon, "10:00")), .impossible)
         let seconds = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1e9
@@ -123,7 +129,7 @@ final class LockBypassTests: XCTestCase {
 
     func testALockLongerThanADayCannotBeCutShort() {
         // Gapless from Saturday 00:00 to Sunday 23:59 (the bridge covers the 23:59 minute).
-        let weekend = Config(blockLists: [list], schedules: [
+        let weekend = cfg([
             window("sat", [.sat], "00:00", "23:59"), window("bridge", [.sat], "23:00", "01:00"), window("sun", [.sun], "00:00", "23:59"),
         ])
         var cut = weekend
@@ -135,7 +141,7 @@ final class LockBypassTests: XCTestCase {
     }
 
     func testAnAlwaysOnImpossibleScheduleCanNeverBeWeakened() {
-        let always = Config(blockLists: [list], schedules: [
+        let always = cfg([
             window("day", Set(Weekday.allCases), "00:00", "23:59"), window("bridge", Set(Weekday.allCases), "23:00", "01:00"),
         ])
         var fewer = always
@@ -145,25 +151,25 @@ final class LockBypassTests: XCTestCase {
 
     // MARK: Permanent locks
 
-    func testAGaplessWeekWithAnyImpossibleWindowIsPermanent() {
+    func testAGaplessWeekAtImpossibleIsPermanent() {
         let week = Set(Weekday.allCases)
-        let trap = Config(blockLists: [list], schedules: [
-            window("day", week, "00:00", "23:59", mode: .basic), window("bridge", week, "23:00", "01:00", mode: .basic),
-            window("friday", [.fri], "09:00", "10:00"),
-        ])
+        let trap = cfg([window("day", week, "00:00", "23:59"), window("bridge", week, "23:00", "01:00")])
         XCTAssertTrue(trap.isPermanentlyLocked)
-        var gone = trap
-        gone.schedules.removeLast()
-        XCTAssertEqual(gone.weakens(from: trap, at: at(.mon, "10:00")), .impossible, "which is why the app refuses to save it")
-        XCTAssertFalse(gone.isPermanentlyLocked, "no Impossible window: gapless Basic is harmless")
+        var softer = trap
+        softer.unlockMode = .basic
+        XCTAssertEqual(softer.weakens(from: trap, at: at(.mon, "10:00")), .impossible, "which is why the app refuses to save it")
+        XCTAssertFalse(softer.isPermanentlyLocked, "not Impossible: gapless Basic is harmless")
+        var friction = trap
+        friction.unlockMode = .friction
+        XCTAssertFalse(friction.isPermanentlyLocked)
     }
 
     func testAGapAnywhereInTheWeekIsNotPermanent() {
         XCTAssertFalse(locked.isPermanentlyLocked)
         let week = Set(Weekday.allCases)
-        let allDay = Config(blockLists: [list], schedules: [window("day", week, "00:00", "23:59")])
+        let allDay = cfg([window("day", week, "00:00", "23:59")])
         XCTAssertFalse(allDay.isPermanentlyLocked, "23:59 is free every day")
-        var off = Config(blockLists: [list], schedules: [window("day", week, "00:00", "23:59"), window("bridge", week, "23:00", "01:00")])
+        var off = cfg([window("day", week, "00:00", "23:59"), window("bridge", week, "23:00", "01:00")])
         XCTAssertTrue(off.isPermanentlyLocked)
         off.schedules[1].enabled = false
         XCTAssertFalse(off.isPermanentlyLocked)

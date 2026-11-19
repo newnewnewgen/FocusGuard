@@ -24,14 +24,14 @@ Apple Developer account, negligible battery cost. Design:
 The window opens with the **Setup** sheet. Click **Install protection…** and type your password
 once: that installs the daemon as root-owned files (`/Library/PrivilegedHelperTools/` and
 `/Library/LaunchDaemons/`) and adds FocusGuard to your login items. The sheet closes by itself
-once everything is green; **Status → Setup…** brings it back (that is where the login-item and
-Dock toggles live). **Not now** closes it without installing: Status then shows one orange row,
+once the blocker is green; **Security → Setup…** brings it back. The login-item and Dock
+switches live under **Security → App**. **Not now** closes it without installing: Security then shows one orange row,
 and the sheet only reopens on its own when something changes or the app is relaunched. Ad-hoc
 signed; requires macOS 15.
 
 After rebuilding, `ditto` the new bundle over the old one and reopen the app. If the daemon
 changed, the Setup sheet opens by itself with **Background blocker needs updating** and an
-**Update…** button (one password prompt), and Status shows one orange row until you do.
+**Update…** button (one password prompt), and Security shows one orange row until you do.
 Blocking continues with the old daemon meanwhile.
 
 **Finding the app.** FocusGuard lives in the menu bar (shield icon). macOS silently hides
@@ -47,20 +47,22 @@ line, and `scripts/uninstall-daemon.sh` removes it. Then edit
     /Library/PrivilegedHelperTools/com.focusguard.daemon check    # what would be blocked now
     /usr/bin/log stream --info --predicate 'subsystem == "com.focusguard"'
 
-## Unlock modes
+## Unlock mode
 
-Each schedule window has an unlock mode. It governs anything that would unblock something
-while the window is active: removing a site or app, disabling or deleting the window,
-shortening it, lowering its mode.
+FocusGuard has one unlock mode, set on the **Security** tab. While any window is active it
+governs every change that would give you more access to what is blocked: removing a site, app,
+keyword or extension, turning a window off or deleting it, ending it early, deleting a list or
+detaching it from a window, allowing a site, and lowering the mode itself.
 
-| Mode | What it takes to weaken an active window | Enforced by |
-|------|------------------------------------------|-------------|
+| Mode | What it takes to loosen anything while a window is active | Enforced by |
+|------|------------------------------------------------------------|-------------|
 | **Basic** (default) | Nothing; applies immediately. | — |
 | **Friction** | Type 40 random letters (no words, no spaces), drawn captcha-style, in a field that refuses pasted text. | The app |
-| **Impossible** | Cannot be done until the window ends. | The app **and the daemon** |
+| **Impossible** | Cannot be done until the last active window ends. | The app **and the daemon** |
 
-Adding sites, apps or windows, and extending an end time, are always allowed. The strictest
-mode among the windows covering an item wins.
+Adding sites, apps or windows, extending an end time and raising the mode are always allowed.
+When no window is active, everything can be changed. A `config.json` from 0.6 or earlier, which
+kept a mode per window, is read as the strictest mode among its enabled windows.
 
 **What Impossible actually guarantees.** `config.json` is writable without a password, so the
 daemon treats it as a proposal. It keeps its own accepted copy in `/var/db/FocusGuard`
@@ -74,7 +76,7 @@ replacing them needs your password.
 
 Two consequences worth knowing before you choose it:
 
-- To change or remove an Impossible schedule, do it **while none of its windows is active**.
+- To loosen anything under Impossible, including the mode, do it **while no window is active**.
 - A schedule with **no gap all week** can never be weakened without `sudo`. That is what you
   asked for; leave a gap if you want a way out.
 
@@ -112,7 +114,7 @@ as they already hide them from the hosts layer. VPNs that use `ipsec*` or `ppp*`
 Site rules cannot reach pages inside Chrome that never cause a lookup: an extension's own pages
 (`chrome-extension://<id>/…`) and Chrome's internal pages (`chrome://extensions`,
 `chrome://settings`). A block list's **Chrome extensions** section (beta: switch it on
-under Status → App → Beta) holds patterns for Chrome's own `URLBlocklist` policy.
+under Security → Beta) holds patterns for Chrome's own `URLBlocklist` policy.
 **Add extension…** lists what is installed and adds `chrome-extension://<id>` for one, shown by
 its icon and name; **Also block the Extensions page** adds `chrome://extensions`, so the
 extension cannot be turned off. Any pattern `config.json` holds is shown and enforced,
@@ -122,7 +124,7 @@ trailing `/*` (which would match nothing) is dropped when you add one. While a w
 Chrome patterns is active the daemon writes them to Chrome's policy preference; Chrome shows
 those pages as blocked by an administrator. When the window ends the key is removed. Other
 browsers are not affected. If something else has already set `URLBlocklist` in
-`/Library/Preferences/com.google.Chrome.plist`, FocusGuard leaves it alone and the Status tab
+`/Library/Preferences/com.google.Chrome.plist`, FocusGuard leaves it alone and the Security tab
 says so.
 
 Chrome picks up a key added to that system-level file but does not notice its removal, so the

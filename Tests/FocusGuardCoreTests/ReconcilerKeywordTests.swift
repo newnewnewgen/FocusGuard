@@ -73,8 +73,8 @@ final class ReconcilerKeywordTests: XCTestCase {
 
     func testObserveUnderAHeldProposalLearnsAgainstTheEnforcedConfig() {
         let strict = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!,
-                                    blockListIDs: [list.id], unlockMode: .impossible)
-        let accepted = Config(blockLists: [list], schedules: [strict])
+                                    blockListIDs: [list.id])
+        let accepted = Config(blockLists: [list], schedules: [strict], unlockMode: .impossible)
         _ = sut.tick(live: accepted, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
         var proposal = accepted
         proposal.blockLists[0].keywords.append(KeywordRule(text: "comic", match: .contains))

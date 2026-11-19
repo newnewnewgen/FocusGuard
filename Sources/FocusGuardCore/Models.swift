@@ -233,10 +233,9 @@ public struct ScheduleWindow: Codable, Equatable, Identifiable {
     public var end: TimeOfDay
     public var blockListIDs: [UUID]
     public var enabled: Bool
-    public var unlockMode: UnlockMode
 
     public init(id: UUID = UUID(), name: String, days: Set<Weekday>, start: TimeOfDay, end: TimeOfDay,
-                blockListIDs: [UUID], enabled: Bool = true, unlockMode: UnlockMode = .friction) {
+                blockListIDs: [UUID], enabled: Bool = true) {
         self.id = id
         self.name = name
         self.days = days
@@ -244,15 +243,15 @@ public struct ScheduleWindow: Codable, Equatable, Identifiable {
         self.end = end
         self.blockListIDs = blockListIDs
         self.enabled = enabled
-        self.unlockMode = unlockMode
     }
 
     // A new stored property must be added here, to the struct, and to `init(from:)` below.
     private enum CodingKeys: String, CodingKey {
-        case id, name, days, start, end, blockListIDs, enabled, unlockMode
+        case id, name, days, start, end, blockListIDs, enabled
     }
 
-    /// Configs written before unlock modes existed decode as `.friction`.
+    /// A per-window `unlockMode` (0.6 and earlier) is ignored here; `Config` reads it once for
+    /// migration to the app-wide mode.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -262,7 +261,6 @@ public struct ScheduleWindow: Codable, Equatable, Identifiable {
         end = try c.decode(TimeOfDay.self, forKey: .end)
         blockListIDs = try c.decode([UUID].self, forKey: .blockListIDs)
         enabled = try c.decode(Bool.self, forKey: .enabled)
-        unlockMode = try c.decodeIfPresent(UnlockMode.self, forKey: .unlockMode) ?? .friction
     }
 }
 
@@ -275,23 +273,42 @@ public struct Config: Codable, Equatable {
     /// Site names (and their subdomains) that keyword rules never block. Explicit `domains`
     /// entries still do: the allow list beats keyword rules only.
     public var alwaysAllow: [String]
+    /// The one unlock mode for the whole app (0.7). While any window is active it gates every
+    /// edit that would give more access to what is blocked, including lowering this mode.
+    public var unlockMode: UnlockMode
 
     public init(version: Int = Config.currentVersion, blockLists: [BlockList] = [], schedules: [ScheduleWindow] = [],
-                alwaysAllow: [String] = []) {
+                alwaysAllow: [String] = [], unlockMode: UnlockMode = .basic) {
         self.version = version
         self.blockLists = blockLists
         self.schedules = schedules
         self.alwaysAllow = alwaysAllow
+        self.unlockMode = unlockMode
     }
 
-    private enum CodingKeys: String, CodingKey { case version, blockLists, schedules, alwaysAllow }
+    private enum CodingKeys: String, CodingKey { case version, blockLists, schedules, alwaysAllow, unlockMode }
 
+    /// The fields of a 0.6 window that matter for migration.
+    private struct LegacyWindowMode: Decodable {
+        var enabled: Bool?
+        var unlockMode: UnlockMode?
+    }
+
+    /// A config without `unlockMode` (0.6 and earlier kept one per window) migrates to the
+    /// strictest mode among its enabled windows, so an update never loosens anything; with no
+    /// windows or no modes, Basic.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decode(Int.self, forKey: .version)
         blockLists = try c.decode([BlockList].self, forKey: .blockLists)
         schedules = try c.decode([ScheduleWindow].self, forKey: .schedules)
         alwaysAllow = try c.decodeIfPresent([String].self, forKey: .alwaysAllow) ?? []
+        if let mode = try c.decodeIfPresent(UnlockMode.self, forKey: .unlockMode) {
+            unlockMode = mode
+        } else {
+            let legacy = (try? c.decode([LegacyWindowMode].self, forKey: .schedules)) ?? []
+            unlockMode = legacy.filter { $0.enabled ?? true }.compactMap(\.unlockMode).max() ?? .basic
+        }
     }
 
     public static let empty = Config()

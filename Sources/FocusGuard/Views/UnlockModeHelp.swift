@@ -24,13 +24,13 @@ struct UnlockModeHelp: View {
             .pickerStyle(.segmented).labelsHidden()
             switch page {
             case .basic:
-                Text("Changes apply at once, even while the window is active.")
+                Text("Changes apply at once, even while a window is active.")
             case .friction:
-                Text("While the window is active, weakening it (removing a site, ending it early, turning it off) first asks you to type 40 random letters, copied from a drawing. Paste and autocorrect do not work.")
+                Text("While any window is active, loosening anything (removing a site, ending a window early, turning it off, lowering this mode) first asks you to type 40 random letters, copied from a drawing. Paste and autocorrect do not work.")
                 ChallengeSheet(challenge: PendingChallenge(sentence: Self.sampleSentence) {}, dismiss: {}, isPreview: true)
                     .background(RoundedRectangle(cornerRadius: 10).fill(.background).shadow(color: .black.opacity(0.18), radius: 6, y: 2))
             case .impossible:
-                Text("While the window is active nothing can weaken it, not even you. Edits that would are held by the daemon until the window ends. Only `sudo` on the command line gets around it.")
+                Text("While any window is active nothing can be loosened, not even by you, and not this mode. Edits that would are held by the daemon until the last active window ends. Only `sudo` on the command line gets around it.")
                 lockedPreview
             }
         }

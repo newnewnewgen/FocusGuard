@@ -340,7 +340,7 @@ No countdowns and no per-minute refresh: the menu says "until 12:00".
 
 ### 10.3 Data model change
 
-`ScheduleWindow` gains `unlockMode: UnlockMode` (`basic | friction |
+**Superseded 2026-11-19 (0.7.0): the mode is app-wide, `Config.unlockMode`, set on the Security tab; a window has no mode. The per-item lock logic below is unchanged, evaluated at that one mode.** `ScheduleWindow` gains `unlockMode: UnlockMode` (`basic | friction |
 impossible`), encoded as a string. Decoding a config without the key yields
 `.friction`, so existing files stay valid and the daemon, which ignores the
 field, is unaffected. `Config.currentVersion` stays 1.

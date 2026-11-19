@@ -30,7 +30,7 @@ struct SectionTitle: View {
     }
 }
 
-/// Features that are hidden until switched on in Status → App → Beta. App-side only: the
+/// Features that are hidden until switched on in Security → Beta. App-side only: the
 /// daemon enforces whatever the config holds whether or not the switch is on.
 enum Beta {
     static let chromeExtensionsKey = "beta.chromeExtensions"

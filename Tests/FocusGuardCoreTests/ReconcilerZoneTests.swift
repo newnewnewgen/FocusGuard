@@ -12,7 +12,8 @@ final class ReconcilerZoneTests: XCTestCase {
 
     func config(mode: UnlockMode) -> Config {
         Config(blockLists: [list], schedules: [ScheduleWindow(
-            name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!, blockListIDs: [list.id], unlockMode: mode)])
+            name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!, blockListIDs: [list.id])],
+               unlockMode: mode)
     }
 
     /// 2026-10-26 is a Monday. Times are Vancouver wall-clock.
@@ -62,7 +63,7 @@ final class ReconcilerZoneTests: XCTestCase {
             let cfg = config(mode: mode)
             _ = r.tick(live: cfg, clock: ClockSample(wall: mondayVancouver(10, 0), monotonic: 100), systemZone: vancouver)
             let out = r.tick(live: cfg, clock: ClockSample(wall: mondayVancouver(10, 2), monotonic: 220), systemZone: tokyo)
-            XCTAssertEqual(out.timeZone, "Asia/Tokyo", "\(mode): a softer window does not pin the zone")
+            XCTAssertEqual(out.timeZone, "Asia/Tokyo", "\(mode): a softer mode does not pin the zone")
         }
         let r = makeReconciler()
         let cfg = config(mode: .impossible)

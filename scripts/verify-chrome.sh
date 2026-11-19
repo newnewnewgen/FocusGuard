@@ -1,5 +1,5 @@
 #!/bin/bash
-# Live acceptance for Chrome pages (chrome pages spec §8). Needs the installed 0.6.1 daemon, no
+# Live acceptance for Chrome pages (chrome pages spec §8). Needs the installed 0.7.0 daemon, no
 # password, Google Chrome running, and you at the keyboard: the script can read the policy
 # preference but cannot see what Chrome shows, so it asks. Puts the two News Feed Eradicator
 # patterns in a window active now and checks the preference follows the window in both domains
@@ -27,7 +27,7 @@ user_absent() { ! defaults read com.google.Chrome URLBlocklist >/dev/null 2>&1; 
 user_domain() { defaults read com.google.Chrome URLBlocklist 2>/dev/null | tr -d '\n ' || echo absent; }
 
 [ -f "$STATUS" ] || { echo "the daemon is not installed (no $STATUS)"; exit 1; }
-[ "$(field version)" = 0.6.1 ] || { echo "installed daemon is $(field version), not 0.6.1: update it from the app's Status tab first"; exit 1; }
+[ "$(field version)" = 0.7.0 ] || { echo "installed daemon is $(field version), not 0.7.0: update it from the app's Status tab first"; exit 1; }
 # Every write below is a proposal the daemon may refuse: under an Impossible window of your own
 # config it would be held, and nothing here would be exercised.
 source=$(field source)
@@ -71,7 +71,7 @@ LIST=0C1C2D3E-0000-4000-8000-0000000000C1; WIN=0C1C2D3E-0000-4000-8000-000000000
 # is the proof that this write is what the daemon now enforces. A write whose window is over
 # has no hosts line; its proof is the previous step's line disappearing.
 write() {  # $1 chromeURLs json, $2 mode, $3 step name (sentinel domain), $4 start, $5 end
-    printf '{"version":1,"blockLists":[{"id":"%s","name":"chrome","domains":["%s.focusguard-test.invalid"],"appBundleIDs":[],"keywords":[],"chromeURLs":%s}],"schedules":[{"id":"%s","name":"Chrome test","days":["%s"],"start":"%s","end":"%s","blockListIDs":["%s"],"enabled":true,"unlockMode":"%s"}],"alwaysAllow":[]}\n' \
+    printf '{"version":1,"blockLists":[{"id":"%s","name":"chrome","domains":["%s.focusguard-test.invalid"],"appBundleIDs":[],"keywords":[],"chromeURLs":%s}],"schedules":[{"id":"%s","name":"Chrome test","days":["%s"],"start":"%s","end":"%s","blockListIDs":["%s"],"enabled":true}],"alwaysAllow":[],"unlockMode":"%s"}\n' \
         "$LIST" "$3" "$1" "$WIN" "$day" "$4" "$5" "$LIST" "$2" > "$CFG"
 }
 adopted() { wait_for "grep -q \"^0.0.0.0 $1.focusguard-test.invalid\" /etc/hosts" 35; }

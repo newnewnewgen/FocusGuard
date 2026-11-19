@@ -232,7 +232,7 @@ final class ReconcilerChromeTests: XCTestCase {
 
     func testHeldConfigKeepsThePatternsItProtects() {
         var locked = cfg
-        locked.schedules[0].unlockMode = .impossible
+        locked.unlockMode = .impossible
         _ = sut.tick(live: locked, clock: ClockSample(wall: monday(10, 0), monotonic: 100))
         XCTAssertEqual(chrome.applied.count, 1)
         var proposed = locked

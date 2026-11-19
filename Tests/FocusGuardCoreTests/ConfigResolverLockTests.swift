@@ -6,8 +6,8 @@ import XCTest
 final class ConfigResolverLockTests: XCTestCase {
     let list = BlockList(name: "l", domains: ["x.com", "y.com"], appBundleIDs: ["com.example.app"])
     lazy var lockedWindow = ScheduleWindow(name: "locked", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!,
-                                           blockListIDs: [list.id], unlockMode: .impossible)
-    lazy var locked = Config(blockLists: [list], schedules: [lockedWindow])
+                                           blockListIDs: [list.id])
+    lazy var locked = Config(blockLists: [list], schedules: [lockedWindow], unlockMode: .impossible)
     lazy var disabled: Config = { var c = locked; c.schedules[0].enabled = false; return c }()
 
     let at10 = LocalMoment(weekday: .mon, minutesSinceMidnight: 10 * 60)
@@ -64,10 +64,10 @@ final class ConfigResolverLockTests: XCTestCase {
         XCTAssertEqual(r.lastGood, more)
     }
 
-    func testFrictionAndBasicWindowsAreNotHeldByTheDaemon() {
+    func testFrictionAndBasicModesAreNotHeldByTheDaemon() {
         for mode in [UnlockMode.basic, .friction] {
             var softer = locked
-            softer.schedules[0].unlockMode = mode
+            softer.unlockMode = mode
             var r = accepted(softer, at: at10)
             var off = softer
             off.schedules[0].enabled = false

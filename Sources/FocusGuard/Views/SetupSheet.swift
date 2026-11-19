@@ -4,7 +4,7 @@ import SwiftUI
 /// The one thing FocusGuard needs to work: the background blocker. Presented over the settings
 /// window whenever `SetupNeed.shouldPresent` says the blocker is unhealthy and the user has not
 /// clicked "Not now" on this exact state — at launch and each time the app becomes active — and
-/// on demand from Status → "Setup…". Login and Dock are app preferences (Status → App), and
+/// on demand from Security → "Setup…". Login and Dock are app preferences (Security → App), and
 /// keyword and Chrome problems are notices there; neither is setup.
 struct SetupSheet: View {
     @Environment(AppModel.self) private var model
@@ -24,7 +24,7 @@ struct SetupSheet: View {
             HStack {
                 Spacer()
                 // The exit while protection is unhealthy (a cancelled password prompt, a failed
-                // install, a dev build run from `build/`): the window stays usable, Status keeps
+                // install, a dev build run from `build/`): the window stays usable, Security keeps
                 // its orange row, and the sheet comes back on its own only if something changes.
                 Button("Not now") { model.snoozeSetup() }.keyboardShortcut(.cancelAction)
                 Button("Done") { close() }.keyboardShortcut(.defaultAction).disabled(!protectionHealthy)

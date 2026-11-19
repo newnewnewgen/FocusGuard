@@ -18,29 +18,30 @@ final class ListOrderTests: XCTestCase {
         XCTAssertEqual(Config.empty.newWindow().blockListIDs, [])
     }
 
-    func testNewWindowIsOffAndBasic() {
+    func testNewWindowIsOffAndNewConfigIsBasic() {
         let w = Config.empty.newWindow()
         XCTAssertFalse(w.enabled, "a new window blocks nothing until switched on")
-        XCTAssertEqual(w.unlockMode, .basic)
+        XCTAssertEqual(Config.empty.unlockMode, .basic, "the mode is the config's, and starts at Basic")
     }
 
     func testMovingListsChangesTheirOrderAndNothingElse() {
         let w = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!,
-                               blockListIDs: [a.id, b.id], unlockMode: .impossible)
-        let before = Config(blockLists: [a, b], schedules: [w], alwaysAllow: ["x.com"])
+                               blockListIDs: [a.id, b.id])
+        let before = Config(blockLists: [a, b], schedules: [w], alwaysAllow: ["x.com"], unlockMode: .impossible)
         var after = before
         after.moveLists(fromOffsets: IndexSet(integer: 1), toOffset: 0)
         XCTAssertEqual(after.blockLists.map(\.id), [b.id, a.id])
         XCTAssertEqual(after.schedules, before.schedules)
         XCTAssertEqual(after.alwaysAllow, before.alwaysAllow)
+        XCTAssertEqual(after.unlockMode, before.unlockMode)
         XCTAssertEqual(after.newWindow().blockListIDs, [b.id], "the default follows the order")
     }
 
     func testReorderingNeverWeakens() {
-        // An Impossible window is active and covers both lists; moving them is still not a cut.
+        // An Impossible lock is active and covers both lists; moving them is still not a cut.
         let w = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!,
-                               blockListIDs: [a.id, b.id], unlockMode: .impossible)
-        let before = Config(blockLists: [a, b], schedules: [w])
+                               blockListIDs: [a.id, b.id])
+        let before = Config(blockLists: [a, b], schedules: [w], unlockMode: .impossible)
         var after = before
         after.moveLists(fromOffsets: IndexSet(integer: 0), toOffset: 2)
         let inside = LocalMoment(weekday: .mon, minutesSinceMidnight: 600)

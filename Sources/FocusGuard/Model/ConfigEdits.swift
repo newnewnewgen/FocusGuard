@@ -19,13 +19,13 @@ extension Config {
 
     /// The window the Schedule tab's ghost row adds: weekdays 09:00–12:00, attached to the
     /// default list (the first one) and to nothing when there is no list yet (UI polish spec §6).
-    /// A new window starts switched off and in Basic mode: nothing blocks until the user has
-    /// looked at the times and turned it on, and Friction/Impossible are choices, never defaults.
+    /// A new window starts switched off: nothing blocks until the user has looked at the times
+    /// and turned it on.
     func newWindow() -> ScheduleWindow {
         ScheduleWindow(name: "Deep work", days: [.mon, .tue, .wed, .thu, .fri],
                        start: TimeOfDay("09:00")!, end: TimeOfDay("12:00")!,
                        blockListIDs: blockLists.first.map { [$0.id] } ?? [],
-                       enabled: false, unlockMode: .basic)
+                       enabled: false)
     }
 
     /// Sidebar drag-to-reorder. Only the order of `blockLists` changes — no window's

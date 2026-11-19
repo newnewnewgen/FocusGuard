@@ -289,3 +289,15 @@ Impossible-window variants (no Impossible window was active). The checklist that
   daemon (`sudo launchctl bootout system/com.focusguard.daemon`, then undo with the sheet's
   Reinstall…) puts one orange row at the top with a Setup… button; no "Uninstall protection…".
 - **Block Lists:** no "Blocked so far" caption under keyword rules.
+
+
+## App-wide unlock mode (0.7.0, pending live check)
+
+2026-11-19: the per-window `unlockMode` became one `Config.unlockMode`, set on the Security tab
+(Status renamed). Lock logic keys on the same per-item protection as before, at the config mode;
+lowering the mode while a window is active is a weakening at the old mode. Needs the 0.7.0
+daemon. To check live, in a gap of the schedule: `scripts/verify-impossible.sh` (writes a
+top-level `"unlockMode":"impossible"` now), then the migration by eye — the user's own
+`config.json` carried `"unlockMode":"impossible"` on its one enabled window before the update,
+so the Security tab should show Impossible after it and `focusguardd check` should print
+`lock: impossible until …` during the window.

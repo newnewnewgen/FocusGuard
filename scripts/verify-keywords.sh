@@ -42,7 +42,7 @@ LIST=0B1C2D3E-0000-4000-8000-0000000000B1; WIN=0B1C2D3E-0000-4000-8000-000000000
 # is the proof that this write is what the daemon now enforces. Without that, a lookup made
 # before the tick is matched against the previous config and nothing is learned.
 write() {  # $1 keywords json, $2 mode, $3 allow json, $4 step name (sentinel domain)
-    printf '{"version":1,"blockLists":[{"id":"%s","name":"kw","domains":["%s.focusguard-test.invalid"],"appBundleIDs":[],"keywords":%s}],"schedules":[{"id":"%s","name":"Keyword test","days":["%s"],"start":"%s","end":"%s","blockListIDs":["%s"],"enabled":true,"unlockMode":"%s"}],"alwaysAllow":%s}\n' \
+    printf '{"version":1,"blockLists":[{"id":"%s","name":"kw","domains":["%s.focusguard-test.invalid"],"appBundleIDs":[],"keywords":%s}],"schedules":[{"id":"%s","name":"Keyword test","days":["%s"],"start":"%s","end":"%s","blockListIDs":["%s"],"enabled":true}],"unlockMode":"%s","alwaysAllow":%s}\n' \
         "$LIST" "$4" "$1" "$WIN" "$day" "$start" "$end" "$LIST" "$2" "$3" > "$CFG"
 }
 adopted() { wait_for "grep -q \"^0.0.0.0 $1.focusguard-test.invalid\" /etc/hosts" 35; }

@@ -6,7 +6,7 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var model = model
         TabView {
-            StatusTab().tabItem { Label("Status", systemImage: "shield") }
+            SecurityTab().tabItem { Label("Security", systemImage: "lock.shield") }
             BlockListsTab().tabItem { Label("Block Lists", systemImage: "list.bullet") }
             ScheduleTab().tabItem { Label("Schedule", systemImage: "calendar") }
         }

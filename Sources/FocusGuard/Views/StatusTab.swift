@@ -1,10 +1,14 @@
 import FocusGuardCore
 import SwiftUI
 
-struct StatusTab: View {
+/// The Security tab: the app-wide unlock mode, what is blocked now, notices, and app settings.
+struct SecurityTab: View {
     @Environment(AppModel.self) private var model
     @Environment(DockFallback.self) private var dock
     @AppStorage(Beta.chromeExtensionsKey) private var chromeExtensionsBeta = false
+    @State private var showModeHelp = false
+    /// Bumped on a refused mode change so the segmented control snaps back to the saved value.
+    @State private var refused = 0
 
     var body: some View {
         Form {
@@ -12,6 +16,32 @@ struct StatusTab: View {
             if let first = problems.first { problemSection(first, more: problems.count - 1) }
             if model.daemonIsHolding || model.clockTampered || model.zoneHeldBack != nil || model.canRestoreConfig
                 || keywordProblem != nil || chromeProblem != nil { noticeSection }
+
+            Section {
+                HStack {
+                    Picker("Unlock mode", selection: Binding(
+                        get: { model.config?.unlockMode ?? .basic },
+                        set: { m in
+                            switch model.apply({ $0.unlockMode = m }) {
+                            case .applied, .noChange: break
+                            case .challenge, .locked, .failed: refused += 1
+                            }
+                        }
+                    )) {
+                        ForEach(UnlockMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().id(refused)
+                    // Learning only; stays enabled under Impossible.
+                    Button { showModeHelp = true } label: { Image(systemName: "info.circle") }
+                        .buttonStyle(.borderless)
+                        .help("What the unlock modes do")
+                        .popover(isPresented: $showModeHelp, arrowEdge: .bottom) { UnlockModeHelp(mode: model.config?.unlockMode ?? .basic) }
+                }
+                Text(modeCaption).font(.caption).foregroundStyle(.secondary)
+            } header: {
+                SectionTitle(title: "Unlock mode",
+                             help: "While any window is active, this is what it takes to give yourself more access: removing a site, app, keyword or extension, turning a window off, ending it early, deleting a list, allowing a site, or lowering this mode. Adding blocks and raising the mode are always allowed. When no window is active, everything can be changed.")
+            }
 
             Section("Now") {
                 if model.isBlocking {
@@ -55,6 +85,16 @@ struct StatusTab: View {
         }
         .formStyle(.grouped)
         .onAppear { dock.check() }
+    }
+
+    private var modeCaption: String {
+        guard let mode = model.lockState.overall else { return "No window is active, so anything can be changed right now." }
+        let until = model.lockState.lockedUntil.map { " until \($0.string)" } ?? " all week (no gap in the schedule)"
+        switch mode {
+        case .basic: return "A window is active\(until). Changes apply at once."
+        case .friction: return "A window is active\(until). Loosening anything asks you to type the letters first."
+        case .impossible: return "A window is active\(until). Nothing can be loosened, including this mode."
+        }
     }
 
     /// What the Setup sheet would show as not green, in the sheet's order: the blocker, and the

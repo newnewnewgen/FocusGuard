@@ -50,21 +50,54 @@ final class ModelsTests: XCTestCase {
         XCTAssertThrowsError(try Config.decodeJSON(Data(json.utf8)))
     }
 
-    func testUnlockModeDefaultsToFrictionWhenAbsent() throws {
-        let json = """
-        {"version":1,"blockLists":[],"schedules":[{"id":"0B1C2D3E-0000-4000-8000-000000000002",
-         "name":"w","days":["mon"],"start":"09:00","end":"10:00","blockListIDs":[],"enabled":true}]}
-        """
-        let cfg = try Config.decodeJSON(Data(json.utf8))
-        XCTAssertEqual(cfg.schedules[0].unlockMode, .friction)
+    // MARK: unlockMode — app-wide (0.7) and migration from per-window (0.6)
+
+    private func window(_ id: String, mode: String?, enabled: Bool? = nil) -> String {
+        var fields = ["\"id\":\"0B1C2D3E-0000-4000-8000-\(id)\"", "\"name\":\"w\"", "\"days\":[\"mon\"]",
+                      "\"start\":\"09:00\"", "\"end\":\"10:00\"", "\"blockListIDs\":[]"]
+        fields.append("\"enabled\":\(enabled ?? true)")
+        if let mode { fields.append("\"unlockMode\":\"\(mode)\"") }
+        return "{" + fields.joined(separator: ",") + "}"
+    }
+
+    private func decode(windows: [String], topLevel: String? = nil) throws -> Config {
+        let mode = topLevel.map { ",\"unlockMode\":\"\($0)\"" } ?? ""
+        let json = "{\"version\":1,\"blockLists\":[],\"schedules\":[\(windows.joined(separator: ","))]\(mode)}"
+        return try Config.decodeJSON(Data(json.utf8))
+    }
+
+    func testMissingUnlockModeMigratesToTheStrictestEnabledWindowMode() throws {
+        let cfg = try decode(windows: [window("000000000001", mode: "impossible"), window("000000000002", mode: "friction")])
+        XCTAssertEqual(cfg.unlockMode, .impossible)
+    }
+
+    func testMigrationIgnoresDisabledWindows() throws {
+        let cfg = try decode(windows: [window("000000000001", mode: "impossible", enabled: false),
+                                       window("000000000002", mode: "friction")])
+        XCTAssertEqual(cfg.unlockMode, .friction)
+    }
+
+    func testMigrationWithNoWindowModesIsBasic() throws {
+        XCTAssertEqual(try decode(windows: [window("000000000001", mode: nil)]).unlockMode, .basic)
+        XCTAssertEqual(try decode(windows: []).unlockMode, .basic)
+    }
+
+    func testTopLevelUnlockModeWinsOverWindowValues() throws {
+        let cfg = try decode(windows: [window("000000000001", mode: "impossible")], topLevel: "basic")
+        XCTAssertEqual(cfg.unlockMode, .basic)
     }
 
     func testUnlockModeRoundTripsAndOrders() throws {
-        var w = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("10:00")!, blockListIDs: [])
-        w.unlockMode = .impossible
-        let cfg = Config(schedules: [w])
-        let decoded = try Config.decodeJSON(try cfg.encodeJSON())
-        XCTAssertEqual(decoded.schedules[0].unlockMode, .impossible)
+        let w = ScheduleWindow(name: "w", days: [.mon], start: TimeOfDay("09:00")!, end: TimeOfDay("10:00")!, blockListIDs: [])
+        for mode in UnlockMode.allCases {
+            let cfg = Config(schedules: [w], unlockMode: mode)
+            let data = try cfg.encodeJSON()
+            let decoded = try Config.decodeJSON(data)
+            XCTAssertEqual(decoded.unlockMode, mode)
+            XCTAssertEqual(decoded, cfg)
+            XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"unlockMode\" : \"\(mode.rawValue)\""),
+                          "encoded as a top-level key")
+        }
         XCTAssertLessThan(UnlockMode.basic, UnlockMode.friction)
         XCTAssertLessThan(UnlockMode.friction, UnlockMode.impossible)
         XCTAssertEqual(max(UnlockMode.basic, .impossible), .impossible)
